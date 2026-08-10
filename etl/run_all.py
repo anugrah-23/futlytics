@@ -15,22 +15,21 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 log = logging.getLogger("run_all")
 
 
-def stage_fbref() -> bool:
-    """Fetch + persist FBref-derived tables. Returns True on success."""
+def stage_players() -> bool:
+    """Build + persist the Player Profile tables (FBref + Understat)."""
     try:
-        from etl.fetch_fbref import fetch_player_season_stats
+        from etl.build_players import build
+        from etl.config import SEASONS
         from etl.io_utils import write_parquet_atomic
 
-        players = fetch_player_season_stats()
-        players = players.reset_index()
-        players.columns = ["_".join(str(c) for c in col).strip("_")
-                           if isinstance(col, tuple) else str(col)
-                           for col in players.columns]
-        write_parquet_atomic(players, "player_season_stats_raw")
-        log.info("FBref stage OK: %d player rows", len(players))
+        players, metrics = build(SEASONS)
+        write_parquet_atomic(players, "players")
+        write_parquet_atomic(metrics, "player_metrics")
+        log.info("Players stage OK: %d players, %d metric rows",
+                 len(players), len(metrics))
         return True
     except Exception:
-        log.exception("FBref stage FAILED — keeping last-good data")
+        log.exception("Players stage FAILED — keeping last-good data")
         return False
 
 
@@ -46,12 +45,12 @@ def stage_whoscored() -> bool:
 
 
 def main() -> int:
-    ok_fb = stage_fbref()
+    ok_players = stage_players()
     ok_ws = stage_whoscored()
     # Non-fatal: as long as we didn't corrupt anything, exit 0 so the scheduler
     # commit step still runs with whatever refreshed successfully.
-    log.info("run_all done. fbref=%s whoscored=%s", ok_fb, ok_ws)
-    return 0 if (ok_fb or ok_ws) else 1
+    log.info("run_all done. players=%s whoscored=%s", ok_players, ok_ws)
+    return 0 if (ok_players or ok_ws) else 1
 
 
 if __name__ == "__main__":
