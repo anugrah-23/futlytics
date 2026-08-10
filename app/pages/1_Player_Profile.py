@@ -70,8 +70,17 @@ labels = {
     f"{r.player} — {r.team} ({r.pos})": (r.league, r.season, r.team, r.player)
     for r in pool.itertuples()
 }
+# Preselect a player arrived-at via a League Overview leaderboard click.
+default_idx = None
+if "nav_player" in st.session_state:
+    target = st.session_state.pop("nav_player")
+    for i, tup in enumerate(labels.values()):
+        if tup == tuple(target):
+            default_idx = i
+            break
+
 choice = st.selectbox("Search player", list(labels.keys()),
-                      index=None, placeholder="Type a name…")
+                      index=default_idx, placeholder="Type a name…")
 if not choice:
     st.caption("Pick a player to see their percentile scouting report.")
     st.stop()

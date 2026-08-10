@@ -18,15 +18,16 @@ log = logging.getLogger("run_all")
 def stage_players() -> bool:
     """Build + persist the Player Profile tables (FBref + Understat)."""
     try:
-        from etl.build_players import build
+        from etl.build_players import build_all
         from etl.config import SEASONS
         from etl.io_utils import write_parquet_atomic
 
-        players, metrics = build(SEASONS)
+        players, metrics, standings = build_all(SEASONS)
         write_parquet_atomic(players, "players")
         write_parquet_atomic(metrics, "player_metrics")
-        log.info("Players stage OK: %d players, %d metric rows",
-                 len(players), len(metrics))
+        write_parquet_atomic(standings, "standings")
+        log.info("Players stage OK: %d players, %d metric rows, %d standings rows",
+                 len(players), len(metrics), len(standings))
         return True
     except Exception:
         log.exception("Players stage FAILED — keeping last-good data")

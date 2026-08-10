@@ -118,6 +118,14 @@ def _compute(metrics: list[Metric], frame: pd.DataFrame, is_gk: bool) -> pd.Data
     return pd.concat(rows, ignore_index=True)
 
 
+# Raw season totals carried on the players table for League Overview leaderboards
+# (player_metrics stores per-90 + percentile; leaderboards want season totals).
+_RAW_TOTALS = {
+    "goals": "goals", "assists": "assists", "np_goals": "goals_pens",
+    "xg": "us_xg", "xa": "us_xa", "key_passes": "us_key_passes", "shots": "shots",
+}
+
+
 def _identity(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame[INDEX].copy()
     out["pos"] = frame.get("position", "")
@@ -126,6 +134,8 @@ def _identity(frame: pd.DataFrame) -> pd.DataFrame:
     out["minutes"] = _num(frame["minutes_col"])
     out["pos_group"] = frame["pos_group"]
     out["limited_sample"] = is_limited_sample(out["minutes"].fillna(0))
+    for out_col, src in _RAW_TOTALS.items():
+        out[out_col] = _num(frame[src]).to_numpy() if src in frame.columns else np.nan
     return out
 
 
@@ -153,16 +163,25 @@ def build(seasons: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return players, metrics
 
 
+def build_all(seasons: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Players + metrics (FBref/Understat) and standings (Understat)."""
+    from etl.standings import build_standings
+    players, metrics = build(seasons)
+    standings = build_standings(seasons)
+    return players, metrics, standings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seasons", nargs="+", default=["2425"])
     args = ap.parse_args()
 
-    players, metrics = build(args.seasons)
-    p1 = write_parquet_atomic(players, "players")
-    p2 = write_parquet_atomic(metrics, "player_metrics")
-    log.info("wrote %s (%d players), %s (%d metric rows)",
-             p1, len(players), p2, len(metrics))
+    players, metrics, standings = build_all(args.seasons)
+    write_parquet_atomic(players, "players")
+    write_parquet_atomic(metrics, "player_metrics")
+    write_parquet_atomic(standings, "standings")
+    log.info("wrote players (%d), player_metrics (%d), standings (%d)",
+             len(players), len(metrics), len(standings))
     return 0
 
 
