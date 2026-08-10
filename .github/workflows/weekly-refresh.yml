@@ -1,0 +1,41 @@
+name: Weekly data refresh
+
+# Runs the ETL weekly and commits refreshed Parquet back to the repo.
+# Streamlit Community Cloud watches the repo and redeploys on push.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch: {}    # allow manual runs
+
+permissions:
+  contents: write          # needed to commit refreshed data files back
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # WhoScored's scraper is Selenium-based; ubuntu-latest ships Chrome.
+      - name: Run ETL
+        run: python -m etl.run_all
+
+      - name: Commit refreshed data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/processed/*.parquet
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "chore(data): weekly refresh $(date -u +%Y-%m-%d)"
+            git push
+          fi

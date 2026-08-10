@@ -1,0 +1,8 @@
+streamlit>=1.36
+soccerdata>=1.8
+pandas>=2.2
+pyarrow>=16
+plotly>=5.22
+mplsoccer>=1.2
+matplotlib>=3.8
+numpy>=1.26

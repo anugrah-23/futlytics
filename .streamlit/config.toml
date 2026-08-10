@@ -1,0 +1,12 @@
+# Light theming per the design doc: pitch-inspired neutral base + single accent hue.
+# Kept minimal on purpose — theme via config, not custom CSS everywhere.
+[theme]
+base = "dark"
+primaryColor = "#2ee6a6"          # single accent = "high percentile"
+backgroundColor = "#0e1512"       # deep charcoal-green pitch neutral
+secondaryBackgroundColor = "#16211c"
+textColor = "#e6efe9"
+font = "sans serif"
+
+[server]
+headless = true

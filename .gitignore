@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# soccerdata raw cache (do NOT commit scraped raw pages)
+.soccerdata/
+soccerdata_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Data: keep the directory but ignore large/raw intermediates.
+# Committed, refreshed Parquet lives in data/processed/ (see .gitignore rule below).
+data/raw/
+data/tmp/
