@@ -163,12 +163,16 @@ def build(seasons: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return players, metrics
 
 
-def build_all(seasons: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Players + metrics (FBref/Understat) and standings (Understat)."""
-    from etl.standings import build_standings
+def build_all(seasons: list[str]) -> dict[str, pd.DataFrame]:
+    """Players + metrics (FBref/Understat), standings & team_match (Understat)."""
+    from etl.standings import build_standings, build_team_match
     players, metrics = build(seasons)
-    standings = build_standings(seasons)
-    return players, metrics, standings
+    return {
+        "players": players,
+        "player_metrics": metrics,
+        "standings": build_standings(seasons),
+        "team_match": build_team_match(seasons),
+    }
 
 
 def main() -> int:
@@ -176,12 +180,10 @@ def main() -> int:
     ap.add_argument("--seasons", nargs="+", default=["2425"])
     args = ap.parse_args()
 
-    players, metrics, standings = build_all(args.seasons)
-    write_parquet_atomic(players, "players")
-    write_parquet_atomic(metrics, "player_metrics")
-    write_parquet_atomic(standings, "standings")
-    log.info("wrote players (%d), player_metrics (%d), standings (%d)",
-             len(players), len(metrics), len(standings))
+    tables = build_all(args.seasons)
+    for name, df in tables.items():
+        write_parquet_atomic(df, name)
+    log.info("wrote %s", ", ".join(f"{n} ({len(d)})" for n, d in tables.items()))
     return 0
 
 

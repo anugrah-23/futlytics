@@ -22,36 +22,48 @@ def stage_players() -> bool:
         from etl.config import SEASONS
         from etl.io_utils import write_parquet_atomic
 
-        players, metrics, standings = build_all(SEASONS)
-        write_parquet_atomic(players, "players")
-        write_parquet_atomic(metrics, "player_metrics")
-        write_parquet_atomic(standings, "standings")
-        log.info("Players stage OK: %d players, %d metric rows, %d standings rows",
-                 len(players), len(metrics), len(standings))
+        tables = build_all(SEASONS)
+        for name, df in tables.items():
+            write_parquet_atomic(df, name)
+        log.info("Players stage OK: %s",
+                 ", ".join(f"{n}={len(d)}" for n, d in tables.items()))
         return True
     except Exception:
         log.exception("Players stage FAILED — keeping last-good data")
         return False
 
 
-def stage_whoscored() -> bool:
-    """Fetch a sample of match events for the team dashboard. Fragile; optional."""
+def stage_shots() -> bool:
+    """Fetch Understat shot events for the shot map / territory views."""
     try:
-        # Intentionally minimal in Phase 0 — wired up fully in Phase 3.
-        log.info("WhoScored stage skipped in Phase 0 (enabled in Phase 3)")
+        from etl.config import SEASONS
+        from etl.io_utils import write_parquet_atomic
+        from etl.shots import fetch_shots
+
+        shots = fetch_shots(SEASONS)
+        write_parquet_atomic(shots, "shots")
+        log.info("Shots stage OK: %d shots", len(shots))
         return True
     except Exception:
-        log.exception("WhoScored stage FAILED — keeping last-good data")
+        log.exception("Shots stage FAILED — keeping last-good data")
         return False
+
+
+def stage_whoscored() -> bool:
+    """Pass networks come from WhoScored/Opta events, scraped OFFLINE via
+    `python -m etl.pass_networks --match <id>` (Selenium — too slow/fragile to
+    run inside the weekly job across all matches). Intentionally a no-op here."""
+    log.info("Pass networks are built offline; see etl.pass_networks")
+    return True
 
 
 def main() -> int:
     ok_players = stage_players()
-    ok_ws = stage_whoscored()
+    ok_shots = stage_shots()
     # Non-fatal: as long as we didn't corrupt anything, exit 0 so the scheduler
     # commit step still runs with whatever refreshed successfully.
-    log.info("run_all done. players=%s whoscored=%s", ok_players, ok_ws)
-    return 0 if (ok_players or ok_ws) else 1
+    log.info("run_all done. players=%s shots=%s", ok_players, ok_shots)
+    return 0 if (ok_players or ok_shots) else 1
 
 
 if __name__ == "__main__":

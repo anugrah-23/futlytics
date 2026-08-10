@@ -21,17 +21,41 @@ log = logging.getLogger(__name__)
 def _side(df: pd.DataFrame, side: str) -> pd.DataFrame:
     """Extract one team-perspective (home/away) from the match table."""
     opp = "away" if side == "home" else "home"
+    num = lambda c: pd.to_numeric(df[c], errors="coerce")  # noqa: E731
     return pd.DataFrame({
         "league": df["league"],
         "season": df["season"],
+        "date": pd.to_datetime(df["date"], errors="coerce"),
         "team": df[f"{side}_team"],
-        "gf": pd.to_numeric(df[f"{side}_goals"], errors="coerce"),
-        "ga": pd.to_numeric(df[f"{opp}_goals"], errors="coerce"),
-        "xgf": pd.to_numeric(df[f"{side}_xg"], errors="coerce"),
-        "xga": pd.to_numeric(df[f"{opp}_xg"], errors="coerce"),
-        "pts": pd.to_numeric(df[f"{side}_points"], errors="coerce"),
-        "xpts": pd.to_numeric(df[f"{side}_expected_points"], errors="coerce"),
+        "opponent": df[f"{opp}_team"],
+        "venue": side,
+        "gf": num(f"{side}_goals"),
+        "ga": num(f"{opp}_goals"),
+        "xgf": num(f"{side}_xg"),
+        "xga": num(f"{opp}_xg"),
+        "pts": num(f"{side}_points"),
+        "xpts": num(f"{side}_expected_points"),
+        "ppda": num(f"{side}_ppda"),
+        "deep": num(f"{side}_deep_completions"),
     })
+
+
+def _long(seasons: list[str] | None) -> pd.DataFrame:
+    us = sd.Understat(
+        leagues=list(LEAGUES.keys()),
+        seasons=seasons or SEASONS,
+        data_dir=Path(SOCCERDATA_CACHE),
+    )
+    m = us.read_team_match_stats().reset_index()
+    long = pd.concat([_side(m, "home"), _side(m, "away")], ignore_index=True)
+    return long[long["gf"].notna()]  # played matches only
+
+
+def build_team_match(seasons: list[str] | None = None) -> pd.DataFrame:
+    """Per-team, per-match long table (pressing/xG trends for the dashboard)."""
+    out = _long(seasons).sort_values(["league", "season", "team", "date"])
+    log.info("team_match -> %s", out.shape)
+    return out.reset_index(drop=True)
 
 
 def build_standings(seasons: list[str] | None = None) -> pd.DataFrame:
