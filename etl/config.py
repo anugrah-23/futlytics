@@ -17,9 +17,9 @@ LEAGUES: dict[str, str] = {
 }
 
 # Seasons in soccerdata's short form: "2324" == 2023/24.
-# Current season + at least one prior for trend context (PRD §6).
-SEASONS: list[str] = ["2324", "2425"]
-CURRENT_SEASON: str = "2425"
+# Six full seasons 2020/21 -> 2025/26 for multi-season trends (PRD §6).
+SEASONS: list[str] = ["2021", "2122", "2223", "2324", "2425", "2526"]
+CURRENT_SEASON: str = "2526"
 
 # --- Paths -------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent

@@ -84,7 +84,9 @@ def _attach_understat(players: pd.DataFrame, seasons: list[str]) -> pd.DataFrame
 def _compute(metrics: list[Metric], frame: pd.DataFrame, is_gk: bool) -> pd.DataFrame:
     nineties = _num(frame["minutes_90s"])
     minutes = _num(frame["minutes_col"]).fillna(0)
-    pos_group = frame["pos_group"]
+    # Rank within season *and* position group: a 2020/21 forward must be
+    # compared to that season's forwards, never pooled across seasons.
+    pos_group = frame["season"].astype(str) + "|" + frame["pos_group"].astype(str)
 
     rows: list[pd.DataFrame] = []
     for m in metrics:

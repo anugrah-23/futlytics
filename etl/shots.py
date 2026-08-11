@@ -13,6 +13,7 @@ import pandas as pd
 import soccerdata as sd
 
 from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.understat_source import read_with_retry
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +30,8 @@ def fetch_shots(seasons: list[str] | None = None) -> pd.DataFrame:
         try:
             us = sd.Understat(leagues=lg, seasons=seasons or SEASONS,
                               data_dir=Path(SOCCERDATA_CACHE))
-            frames.append(us.read_shot_events().reset_index())
+            frames.append(read_with_retry(
+                lambda us=us: us.read_shot_events().reset_index(), f"shots {lg}"))
             log.info("shots fetched: %s", lg)
         except Exception as exc:
             log.warning("shots FAILED for %s (skipped): %s", lg, exc)
