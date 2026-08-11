@@ -23,3 +23,6 @@ Thumbs.db
 # Committed, refreshed Parquet lives in data/processed/ (see .gitignore rule below).
 data/raw/
 data/tmp/
+
+# Selenium/WhoScored download scratch
+downloaded_files/
