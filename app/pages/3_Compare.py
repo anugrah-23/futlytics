@@ -17,12 +17,16 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
+import ui_theme  # noqa: E402
 from viz.radar import radar_overlay, PALETTE  # noqa: E402
 from etl.metrics import (  # noqa: E402
     OUTFIELD_METRICS, GK_METRICS, OUTFIELD_CONCEPTS, GK_CONCEPTS,
 )
 
-st.set_page_config(page_title="Compare", page_icon="🆚", layout="wide")
+st.set_page_config(page_title="Compare", layout="wide",
+                   initial_sidebar_state="collapsed")
+ui_theme.apply()
+ui_theme.masthead(active="Compare")
 
 LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League", "ESP-La Liga": "La Liga",
@@ -43,13 +47,11 @@ def _load():
 
 players, metrics, standings, team_match = _load()
 
-st.title("🆚 Compare")
-
 if players.empty:
-    st.info("No dataset yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```",
-            icon="🗂️")
+    st.info("No dataset yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```")
     st.stop()
 
+ui_theme.context_header("Side by side", "Compare")
 mode = st.radio("Compare", ["Players", "Teams"], horizontal=True, label_visibility="collapsed")
 
 
@@ -65,15 +67,12 @@ if mode == "Players":
     seasons = sorted(players["season"].unique(), reverse=True)
     leagues = [l for l in LEAGUE_LABELS if l in set(players["league"])]
 
-    with st.sidebar:
-        st.header("Filters")
-        season = st.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
-                              key="flt_season")
-        picked_leagues = st.multiselect("League(s)", leagues, default=leagues,
-                                        format_func=lambda l: LEAGUE_LABELS.get(l, l),
-                                        key="flt_leagues")
-        st.caption("Percentiles are computed within the selected league(s) & season, "
-                   "against players in the same position group.")
+    fc1, fc2 = st.columns([1, 2])
+    season = fc1.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
+                           key="flt_season")
+    picked_leagues = fc2.multiselect("League(s)", leagues, default=leagues,
+                                     format_func=lambda l: LEAGUE_LABELS.get(l, l),
+                                     key="flt_leagues")
 
     pool = players[(players["season"] == season) & (players["league"].isin(picked_leagues))]
     if pool.empty:
@@ -111,7 +110,7 @@ if mode == "Players":
         col.caption(f"{r['pos']} · Age {'—' if pd.isna(r['age']) else int(r['age'])} · "
                     f"{'—' if pd.isna(r['minutes']) else int(r['minutes'])} min")
         if bool(r["limited_sample"]):
-            col.caption("⚠️ limited sample (<450 min)")
+            col.caption("Limited sample (<450 min)")
 
     st.caption(f"20{season[:2]}/{season[2:]} · percentiles vs positional peers in the selection.")
     st.divider()
@@ -119,7 +118,7 @@ if mode == "Players":
     n_gk = sum(p["gk"] for p in people)
     if 0 < n_gk < len(people):
         st.warning("Mixing goalkeepers with outfield players — their metrics aren't "
-                   "comparable, so radars are hidden. See the raw table below.", icon="⚠️")
+                   "comparable, so radars are hidden. See the raw table below.")
         radar_ok = False
         concepts = []
     else:
@@ -192,13 +191,12 @@ else:
     seasons = sorted(standings["season"].unique(), reverse=True)
     leagues = [l for l in LEAGUE_LABELS if l in set(standings["league"])]
 
-    with st.sidebar:
-        st.header("Filters")
-        season = st.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
-                              key="flt_season")
-        league = st.selectbox("League", leagues,
-                              format_func=lambda l: LEAGUE_LABELS.get(l, l),
-                              key="flt_league_single")
+    fc1, fc2 = st.columns(2)
+    season = fc1.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
+                           key="flt_season")
+    league = fc2.selectbox("League", leagues,
+                           format_func=lambda l: LEAGUE_LABELS.get(l, l),
+                           key="flt_league_single")
 
     tbl = standings[(standings["season"] == season) & (standings["league"] == league)].copy()
     if tbl.empty:
@@ -279,6 +277,6 @@ else:
     st.caption(f"Data last updated: {da.last_updated('standings')}")
 
 st.divider()
-st.page_link("Home.py", label="← League Overview", icon="⚽")
-st.page_link("pages/1_Player_Profile.py", label="Player Profile", icon="👤")
-st.page_link("pages/2_Team_Dashboard.py", label="Team Dashboard", icon="📊")
+st.page_link("Home.py", label="← League Overview")
+st.page_link("pages/1_Player_Profile.py", label="Player Profile")
+st.page_link("pages/2_Team_Dashboard.py", label="Team Dashboard")

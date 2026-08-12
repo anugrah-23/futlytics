@@ -15,9 +15,13 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
+import ui_theme  # noqa: E402
 from viz.pitch import shot_map, shot_heatmap, pass_network  # noqa: E402
 
-st.set_page_config(page_title="Team Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Team Dashboard", layout="wide",
+                   initial_sidebar_state="collapsed")
+ui_theme.apply()
+ui_theme.masthead(active="Team Dashboard")
 
 LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League", "ESP-La Liga": "La Liga",
@@ -33,44 +37,45 @@ def _load():
 
 standings, team_match, shots, pnets = _load()
 
-st.title("📊 Team Dashboard")
-
 if standings.empty:
     st.info("No team data yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n"
-            "python -m etl.shots --seasons 2425\n```", icon="🗂️")
+            "python -m etl.shots --seasons 2425\n```")
     st.stop()
 
-# --- Filters -----------------------------------------------------------------
+# --- Filters (top bar) -------------------------------------------------------
 seasons = sorted(standings["season"].unique(), reverse=True)
 leagues = [l for l in LEAGUE_LABELS if l in set(standings["league"])]
 nav = st.session_state.pop("nav_team", None)
 
-with st.sidebar:
-    st.header("Filters")
-    season = st.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
-                          key="flt_season")
-    league = st.selectbox("League", leagues, format_func=lambda l: LEAGUE_LABELS.get(l, l),
-                          key="flt_league_single")
+fc1, fc2, fc3 = st.columns(3)
+league = fc1.selectbox("League", leagues, format_func=lambda l: LEAGUE_LABELS.get(l, l),
+                       key="flt_league_single")
+season = fc2.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
+                       key="flt_season")
 
 tbl = standings[(standings["season"] == season) & (standings["league"] == league)]
 team_opts = tbl.sort_values("position")["team"].tolist()
-default_team = nav[2] if nav and nav[2] in team_opts else (team_opts[0] if team_opts else None)
 if not team_opts:
     st.warning("No teams for this selection.")
     st.stop()
-team = st.selectbox("Team", team_opts, index=team_opts.index(default_team))
+default_team = nav[2] if nav and nav[2] in team_opts else team_opts[0]
+team = fc3.selectbox("Team", team_opts, index=team_opts.index(default_team))
 
 trow = tbl[tbl["team"] == team].iloc[0]
 
-# --- Header ------------------------------------------------------------------
-c = st.columns(6)
-c[0].metric("Position", f"{int(trow['position'])}")
-c[1].metric("Record", f"{int(trow['W'])}-{int(trow['D'])}-{int(trow['L'])}")
-c[2].metric("Points", f"{int(trow['Pts'])}", f"xPTS {trow['xPTS']:.0f}")
-c[3].metric("Goals", f"{int(trow['GF'])}-{int(trow['GA'])}")
-c[4].metric("xG", f"{trow['xG']:.0f}", f"xGA {trow['xGA']:.0f}")
-c[5].metric("xGD", f"{trow['xGD']:+.1f}")
-st.caption(f"{LEAGUE_LABELS.get(league, league)} · 20{season[:2]}/{season[2:]}")
+# --- Team header -------------------------------------------------------------
+ui_theme.context_header(
+    f"{LEAGUE_LABELS.get(league, league)} · 20{season[:2]}/{season[2:]}", team)
+ui_theme.kpi_row([
+    {"label": "Position", "big": f"{int(trow['position'])}",
+     "sub": f"{int(trow['W'])}-{int(trow['D'])}-{int(trow['L'])} record"},
+    {"label": "Points", "big": f"{int(trow['Pts'])}", "tone": "amber",
+     "sub": f"xPTS {trow['xPTS']:.0f}"},
+    {"label": "Goals", "big": f"{int(trow['GF'])}–{int(trow['GA'])}",
+     "sub": "for–against"},
+    {"label": "xG · xGA", "big": f"{trow['xG']:.0f}", "tone": "cool",
+     "sub": f"xGA {trow['xGA']:.0f} · xGD {trow['xGD']:+.1f}"},
+])
 st.divider()
 
 # Shots for/against for this team.
@@ -158,8 +163,7 @@ with tabs[4]:
             "**Pass network needs WhoScored event data** (Selenium-scraped offline, "
             "not fetched live by the app). Build it with:\n\n"
             "```\npython -m etl.pass_networks --match <whoscored_game_id>\n```\n\n"
-            "Pre-built networks for this team will appear here automatically.",
-            icon="🕸️",
+            "Pre-built networks for this team will appear here automatically."
         )
     else:
         pn = pnets[pnets["team"] == team]

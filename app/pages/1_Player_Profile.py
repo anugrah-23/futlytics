@@ -15,10 +15,14 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
+import ui_theme  # noqa: E402
 from viz.radar import pizza  # noqa: E402
 from etl.metrics import OUTFIELD_CONCEPTS, GK_CONCEPTS  # noqa: E402
 
-st.set_page_config(page_title="Player Profile", page_icon="👤", layout="wide")
+st.set_page_config(page_title="Player Profile", layout="wide",
+                   initial_sidebar_state="collapsed")
+ui_theme.apply()
+ui_theme.masthead(active="Player Profile")
 
 LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League",
@@ -36,28 +40,21 @@ def _load():
 
 players, metrics = _load()
 
-st.title("👤 Player Profile")
-
 if players.empty or metrics.empty:
-    st.info("No player data yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```",
-            icon="🗂️")
+    st.info("No player data yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```")
     st.stop()
 
-# --- Filter bar (persists across pages via session_state) --------------------
+# --- Filters (top bar; state persists across pages) --------------------------
 seasons = sorted(players["season"].unique(), reverse=True)
 leagues = list(LEAGUE_LABELS.keys())
 
-with st.sidebar:
-    st.header("Filters")
-    season = st.selectbox("Season", seasons,
-                          format_func=lambda s: f"20{s[:2]}/{s[2:]}",
-                          key="flt_season")
-    picked_leagues = st.multiselect("League(s)", leagues,
-                                    default=leagues,
-                                    format_func=lambda l: LEAGUE_LABELS.get(l, l),
-                                    key="flt_leagues")
-    st.caption("Percentiles are computed within the selected league(s) & season, "
-               "against players in the same position group.")
+fc1, fc2 = st.columns([1, 2])
+season = fc1.selectbox("Season", seasons,
+                       format_func=lambda s: f"20{s[:2]}/{s[2:]}",
+                       key="flt_season")
+picked_leagues = fc2.multiselect("League(s)", leagues, default=leagues,
+                                 format_func=lambda l: LEAGUE_LABELS.get(l, l),
+                                 key="flt_leagues")
 
 pool = players[(players["season"] == season) & (players["league"].isin(picked_leagues))]
 if pool.empty:
@@ -93,29 +90,33 @@ pm = metrics[(metrics["league"] == lg) & (metrics["season"] == sn)
 is_gk = prow["pos_group"] == "GK"
 concepts = GK_CONCEPTS if is_gk else OUTFIELD_CONCEPTS
 
-# --- Header band -------------------------------------------------------------
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Player", prow["player"])
-c2.metric("Team", prow["team"])
-c3.metric("Position", prow["pos"])
-c4.metric("Age", "—" if pd.isna(prow["age"]) else int(prow["age"]))
-c5.metric("Minutes", "—" if pd.isna(prow["minutes"]) else int(prow["minutes"]))
-st.caption(f"{LEAGUE_LABELS.get(lg, lg)} · 20{sn[:2]}/{sn[2:]} · {prow['nation']}")
+# --- Player header -----------------------------------------------------------
+ui_theme.context_header(
+    f"{LEAGUE_LABELS.get(lg, lg)} · 20{sn[:2]}/{sn[2:]} · {prow['nation']}",
+    prow["player"])
+ui_theme.kpi_row([
+    {"label": "Team", "big": prow["team"]},
+    {"label": "Position", "big": prow["pos"]},
+    {"label": "Age", "big": "—" if pd.isna(prow["age"]) else int(prow["age"]), "tone": "cool"},
+    {"label": "Minutes", "big": "—" if pd.isna(prow["minutes"]) else int(prow["minutes"]),
+     "tone": "amber"},
+])
 
 limited = bool(prow["limited_sample"])
 if limited:
-    st.warning(
-        "⚠️ **Limited sample** — under 450 minutes played. Percentiles are "
-        "unreliable at this sample size, so the charts are hidden and only raw "
-        "per-90 values are shown.",
-        icon="⚠️",
-    )
+    st.warning("**Limited sample** — under 450 minutes played. Percentiles are "
+               "unreliable at this sample size, so the charts are hidden and only raw "
+               "per-90 values are shown.")
+else:
+    strengths = (pm.dropna(subset=["percentile"])
+                 .sort_values("percentile", ascending=False).head(6))
+    if not strengths.empty:
+        st.markdown('<p class="eyebrow" style="margin-top:14px">Strengths · percentile vs peers</p>',
+                    unsafe_allow_html=True)
+        ui_theme.chip_strip(list(zip(strengths["label"], strengths["percentile"])))
 
-st.markdown(
-    "**How to read this:** each wedge is a percentile (0–100) vs positional peers — "
-    "a fuller, greener wedge means the player ranks higher. Numbers are per-90 unless "
-    "marked % or /90."
-)
+st.caption("Each wedge is a percentile (0–100) vs positional peers — a fuller, greener wedge "
+           "ranks higher. Numbers are per-90 unless marked % or /90.")
 st.divider()
 
 

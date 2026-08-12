@@ -1,12 +1,16 @@
-# Light theming per the design doc: pitch-inspired neutral base + single accent hue.
-# Kept minimal on purpose — theme via config, not custom CSS everywhere.
+# 'Editorial' direction (comfortable density): warm-ink ground, soft-green accent.
+# Colors here; typography (Newsreader headings + Inter body) via ui_theme.apply().
 [theme]
 base = "dark"
-primaryColor = "#2ee6a6"          # single accent = "high percentile"
-backgroundColor = "#0e1512"       # deep charcoal-green pitch neutral
-secondaryBackgroundColor = "#16211c"
-textColor = "#e6efe9"
-font = "sans serif"
+primaryColor = "#5ac59a"          # soft green accent (single "high percentile" hue)
+backgroundColor = "#14130d"       # warm ink ground
+secondaryBackgroundColor = "#1c1a12"  # warm panel
+textColor = "#ede7d8"             # warm off-white
+font = "serif"                    # single-typeface app; grid uses serif to match Newsreader
+
+[client]
+# Masthead nav (ui_theme.masthead) replaces the default page list.
+showSidebarNavigation = false
 
 [server]
 headless = true

@@ -1,8 +1,9 @@
 """League Overview — landing page (Streamlit entrypoint app/Home.py).
 
-Standings (with xG shadow table) + leaderboards. Clicking a leaderboard row
-navigates to that player's profile; clicking a standings row opens the team
-dashboard. Filter state (league/season) persists via st.session_state.
+Masthead + top-bar filters, KPI stat-tiles, the standings grid (interactive:
+click a row for the team dashboard), and styled leaderboard cards (click a
+name for the player profile, via a query-param link). Filter state persists
+across pages via st.session_state.
 """
 from __future__ import annotations
 
@@ -15,8 +16,12 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
+import ui_theme  # noqa: E402
 
-st.set_page_config(page_title="Football Analytics", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="Football Analytics", layout="wide",
+                   initial_sidebar_state="collapsed")
+ui_theme.apply()
+ui_theme.consume_leaderboard_click()  # may switch_page + stop if ?lbp= is set
 
 LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League",
@@ -26,6 +31,15 @@ LEAGUE_LABELS = {
     "FRA-Ligue 1": "Ligue 1",
 }
 
+BOARDS = [
+    ("Top scorers", "goals", "Goals", ""),
+    ("Expected goals", "xg", "xG", "cool"),
+    ("Top assists", "assists", "Assists", "amber"),
+    ("Expected assists", "xa", "xA", "cool"),
+    ("Key passes", "key_passes", "Key passes", "amber"),
+    ("Shots", "shots", "Shots", ""),
+]
+
 
 @st.cache_data(show_spinner=False)
 def _load():
@@ -34,40 +48,60 @@ def _load():
 
 players, standings = _load()
 
-st.title("⚽ Football Analytics")
-st.caption("Top-5 European league player & tactical analytics")
+ui_theme.masthead(active="Overview")
 
 if players.empty:
-    st.info("No dataset yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```",
-            icon="🗂️")
+    st.info("No dataset yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```")
     st.stop()
 
-# --- Filters (persist across pages) ------------------------------------------
+# --- Filters (top bar; state persists across pages) --------------------------
 seasons = sorted(players["season"].unique(), reverse=True)
 league_keys = [l for l in LEAGUE_LABELS if l in set(players["league"])]
 
-with st.sidebar:
-    st.header("Filters")
-    season = st.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
-                          key="flt_season")
-    league = st.selectbox("League", league_keys,
-                          format_func=lambda l: LEAGUE_LABELS.get(l, l),
-                          key="flt_league_single")
+fc1, fc2, _sp = st.columns([1, 1, 2])
+league = fc1.selectbox("League", league_keys,
+                       format_func=lambda l: LEAGUE_LABELS.get(l, l),
+                       key="flt_league_single")
+season = fc2.selectbox("Season", seasons, format_func=lambda s: f"20{s[:2]}/{s[2:]}",
+                       key="flt_season")
 
-st.subheader(f"{LEAGUE_LABELS.get(league, league)} · 20{season[:2]}/{season[2:]}")
-st.caption(f"Data last updated: {da.last_updated('players')}")
+# --- Context header ----------------------------------------------------------
+st.markdown(
+    f'<p class="eyebrow">{LEAGUE_LABELS.get(league, league)} · 20{season[:2]}/{season[2:]}</p>'
+    '<h1 style="font-size:clamp(2rem,4.4vw,2.8rem);margin:0;">League Overview</h1>',
+    unsafe_allow_html=True,
+)
+st.caption(f"Data updated {da.last_updated('players')}")
 
 pl = players[(players["season"] == season) & (players["league"] == league)]
-
-
-def _goto_player(row: pd.Series) -> None:
-    st.session_state["nav_player"] = (row["league"], row["season"], row["team"], row["player"])
-    st.switch_page("pages/1_Player_Profile.py")
-
-
-# --- Standings ---------------------------------------------------------------
-st.markdown("### Standings")
 tbl = standings[(standings["season"] == season) & (standings["league"] == league)]
+
+# --- KPI tiles ---------------------------------------------------------------
+tiles: list[dict] = []
+if not tbl.empty:
+    champ = tbl.sort_values("position").iloc[0]
+    tiles.append({"label": "Champions", "big": champ["team"],
+                  "sub": f'<b>{int(champ["Pts"])}</b> pts · <b>{int(champ["GD"]):+d}</b> GD'})
+if not pl.empty and "goals" in pl.columns and pl["goals"].notna().any():
+    gb = pl.sort_values("goals", ascending=False).iloc[0]
+    xg_txt = f' · {gb["xg"]:.1f} xG' if pd.notna(gb.get("xg")) else ""
+    tiles.append({"label": "Golden Boot", "big": gb["player"], "tone": "amber",
+                  "sub": f'<b>{int(gb["goals"])}</b> goals{xg_txt}'})
+if not tbl.empty and "xG" in tbl.columns:
+    bx = tbl.sort_values("xG", ascending=False).iloc[0]
+    tiles.append({"label": "Best attack · xG", "big": bx["team"], "tone": "cool",
+                  "sub": f'<b>{bx["xG"]:.1f}</b> xG · {int(bx["Pts"])} pts'})
+if not tbl.empty and {"Pts", "xPTS"} <= set(tbl.columns):
+    op = tbl.assign(_d=tbl["Pts"] - tbl["xPTS"]).sort_values("_d", ascending=False).iloc[0]
+    tiles.append({"label": "Over-performer", "big": op["team"],
+                  "sub": f'<b class="up">{op["Pts"] - op["xPTS"]:+.1f}</b> pts vs xPTS'})
+if tiles:
+    ui_theme.kpi_row(tiles)
+
+# --- Standings (interactive grid) --------------------------------------------
+ui_theme.section_header(
+    "The table", "Standings",
+    note="Real table beside its expected-goals shadow. Click a row for the team dashboard.")
 if tbl.empty:
     st.caption("No standings available for this selection.")
 else:
@@ -87,41 +121,33 @@ else:
         team = show.iloc[ev.selection.rows[0]]["team"]
         st.session_state["nav_team"] = (league, season, team)
         st.switch_page("pages/2_Team_Dashboard.py")
-    st.caption("Real table alongside its expected-goals shadow (xG/xGA/xGD/xPTS). "
-               "Click a row for the team dashboard. Sort by clicking any column.")
 
-# --- Leaderboards ------------------------------------------------------------
-st.markdown("### Leaderboards")
-st.caption("Season totals. Click a player to open their profile.")
+# --- Leaderboards (styled cards; click a name -> player profile) -------------
+ui_theme.section_header(
+    "Leaders", "Season leaderboards",
+    note="Bar length is relative to the leader. Click any name to open the player.")
 
-BOARDS = [
-    ("Top scorers", "goals", "Goals"),
-    ("Expected goals (xG)", "xg", "xG"),
-    ("Top assists", "assists", "Assists"),
-    ("Expected assists (xA)", "xa", "xA"),
-    ("Key passes", "key_passes", "Key passes"),
-    ("Shots", "shots", "Shots"),
-]
-
-cols = st.columns(3)
-for i, (title, metric, label) in enumerate(BOARDS):
+boards_data: list[dict] = []
+for title, metric, label, tone in BOARDS:
     if metric not in pl.columns:
         continue
-    board = (pl.dropna(subset=[metric])
-             .sort_values(metric, ascending=False)
-             .head(10)[["player", "team", metric, "league", "season"]]
-             .reset_index(drop=True))
-    with cols[i % 3]:
-        st.markdown(f"**{title}**")
-        disp = board[["player", "team", metric]].rename(
-            columns={"player": "Player", "team": "Team", metric: label})
-        disp[label] = disp[label].round(1) if metric in ("xg", "xa") else disp[label].astype(int)
-        ev = st.dataframe(disp, hide_index=True, width="stretch",
-                          on_select="rerun", selection_mode="single-row", key=f"lb_{metric}")
-        if ev.selection.rows:
-            _goto_player(board.iloc[ev.selection.rows[0]])
+    b = pl.dropna(subset=[metric]).sort_values(metric, ascending=False).head(8)
+    if b.empty:
+        continue
+    mx = float(b[metric].max()) or 1.0
+    rows = []
+    for _, r in b.iterrows():
+        val = round(float(r[metric]), 1) if metric in ("xg", "xa") else int(r[metric])
+        rows.append({
+            "nm": r["player"], "tm": r["team"], "val": val,
+            "frac": max(0.0, float(r[metric]) / mx),
+            "league": r["league"], "season": r["season"],
+            "team": r["team"], "player": r["player"],
+        })
+    boards_data.append({"title": title, "unit": label, "tone": tone, "rows": rows})
 
-st.divider()
-st.page_link("pages/1_Player_Profile.py", label="Player Profile — percentile scouting report", icon="👤")
+if boards_data:
+    ui_theme.leaders_grid(boards_data)
+
 st.caption("Player metrics: FBref (goals, shots, discipline) + Understat (xG, xA, key passes). "
-           "Standings xG from Understat.")
+           "Standings & xG shadow from Understat.")
