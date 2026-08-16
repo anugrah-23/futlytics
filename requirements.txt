@@ -1,10 +1,12 @@
-# Runtime dependencies — what the deployed Streamlit app needs (reads parquets
-# only). Keep this lean so Streamlit Community Cloud builds fast and reliably.
-# ETL/scraping deps (soccerdata, Selenium, ...) live in requirements-etl.txt.
-streamlit>=1.36
-pandas>=2.2
-pyarrow>=16
-plotly>=5.22
-mplsoccer>=1.2
-matplotlib>=3.8
-numpy>=1.26
+# Runtime dependencies — PINNED to the locally-tested stack so Streamlit Cloud
+# reproduces a known-good build instead of resolving to the newest releases
+# (Streamlit 1.61.1 breaks on pandas 3.x). Python is pinned in .python-version.
+# Keep this lean: the app reads parquets only. Scraping deps (soccerdata /
+# Selenium) live in requirements-etl.txt.
+streamlit==1.61.1
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==24.0.0
+plotly==6.9.0
+mplsoccer==1.8.0
+matplotlib==3.10.9
