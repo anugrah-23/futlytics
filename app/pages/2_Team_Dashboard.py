@@ -16,7 +16,7 @@ import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
 import ui_theme  # noqa: E402
-from viz.pitch import shot_map, shot_heatmap, pass_network  # noqa: E402
+from viz.pitch import shot_map, shot_heatmap, pass_network, average_pass_network  # noqa: E402
 
 st.set_page_config(page_title="Team Dashboard", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -27,6 +27,41 @@ LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League", "ESP-La Liga": "La Liga",
     "ITA-Serie A": "Serie A", "GER-Bundesliga": "Bundesliga", "FRA-Ligue 1": "Ligue 1",
 }
+
+# Pass networks come from WhoScored, which names some clubs differently from the
+# Understat-derived standings/selector ("Man City" vs "Manchester City"). These
+# aliases cover cases the prefix-token matcher below can't (abbreviations).
+_PN_ALIASES = {
+    "Manchester United": "Man Utd",
+    "Paris Saint-Germain": "PSG", "Paris Saint Germain": "PSG",
+    "Internazionale": "Inter",
+}
+
+
+def _pn_tokens(name: str) -> list[str]:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(name))
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    for ch in "-.'":
+        s = s.replace(ch, " ")
+    return [t for t in s.split() if t]
+
+
+def resolve_pn_team(selected: str, candidates: set[str]) -> str | None:
+    """Map a standings team name to its pass-network (WhoScored) equivalent:
+    exact match, then alias table, then token match where each token of the
+    shorter name prefixes one of the other ('Man City' <-> 'Manchester City')."""
+    if selected in candidates:
+        return selected
+    if _PN_ALIASES.get(selected) in candidates:
+        return _PN_ALIASES[selected]
+    sel = _pn_tokens(selected)
+    for cand in candidates:
+        ct = _pn_tokens(cand)
+        short, long = (sel, ct) if len(sel) <= len(ct) else (ct, sel)
+        if short and all(any(a.startswith(b) or b.startswith(a) for b in long) for a in short):
+            return cand
+    return None
 
 
 @st.cache_data(show_spinner=False)
@@ -156,23 +191,44 @@ with tabs[3]:
 
 # --- Pass Network ------------------------------------------------------------
 with tabs[4]:
-    have = (not pnets.empty and "team" in pnets.columns
-            and team in set(pnets["team"]))
-    if not have:
+    cols_ok = not pnets.empty and {"league", "season", "team", "kind"} <= set(pnets.columns)
+    scope = (pnets[(pnets["league"] == league) & (pnets["season"] == season)]
+             if cols_ok else pnets.iloc[0:0])
+    pn_team = resolve_pn_team(team, set(scope["team"])) if not scope.empty else None
+    pn = scope[scope["team"] == pn_team] if pn_team else scope.iloc[0:0]
+    if pn.empty:
         st.info(
-            "**Pass network needs WhoScored event data** (Selenium-scraped offline, "
-            "not fetched live by the app). Build it with:\n\n"
-            "```\npython -m etl.pass_networks --match <whoscored_game_id>\n```\n\n"
-            "Pre-built networks for this team will appear here automatically."
+            "**No pass networks for this team & season yet.** They come from WhoScored "
+            "event data (Selenium-scraped offline — the app never scrapes live), built by "
+            "a resumable batch:\n\n"
+            "```\npython -m etl.pass_networks --featured\n```\n\n"
+            "Featured teams fill in season by season as the scrape progresses."
         )
     else:
-        pn = pnets[pnets["team"] == team]
-        match_lbl = pn["match"].iloc[0] if "match" in pn.columns else ""
-        nodes = pn[pn["kind"] == "node"].copy()
-        edges = pn[pn["kind"] == "edge"].copy()
-        st.pyplot(pass_network(nodes, edges, title=f"Pass network — {match_lbl}"))
-        st.caption("Node = average pass position, size ∝ involvement; edge width ∝ pass volume "
-                   "between teammates. Source: WhoScored/Opta events.")
+        AVG = "Season average"
+        match_opts = (pn[pn["kind"] == "node"][["game_id", "match"]]
+                      .drop_duplicates().sort_values("match"))
+        choice = st.selectbox(f"Match ({len(match_opts)} available)",
+                              [AVG] + match_opts["match"].tolist(), key="pn_match_sel")
+
+        if choice == AVG:
+            nodes, edges, nmatch = average_pass_network(pn)
+            st.pyplot(pass_network(
+                nodes, edges,
+                title=f"Average pass network — {team} · {nmatch} match{'es' if nmatch != 1 else ''}"))
+            st.caption(
+                f"Averaged across {nmatch} match{'es' if nmatch != 1 else ''} this season. Node = mean "
+                "pass position (weighted by involvement), size ∝ involvement; edge = a passing link "
+                "recurring in ≥40% of matches, width ∝ mean volume. Source: WhoScored/Opta events.")
+        else:
+            gid = match_opts.loc[match_opts["match"] == choice, "game_id"].iloc[0]
+            one = pn[pn["game_id"] == gid]
+            nodes = one[one["kind"] == "node"].copy()
+            edges = one[one["kind"] == "edge"].copy()
+            st.pyplot(pass_network(nodes, edges, title=f"Pass network — {choice}"))
+            st.caption(
+                "Single match. Node = average pass position, size ∝ involvement; edge width ∝ "
+                "pass volume between teammates (min 3 passes). Source: WhoScored/Opta events.")
 
 st.divider()
 st.caption("Shot & pressing data: Understat. Pass network: WhoScored/Opta (offline). "

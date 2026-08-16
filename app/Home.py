@@ -18,10 +18,11 @@ import streamlit as st  # noqa: E402
 import data_access as da  # noqa: E402
 import ui_theme  # noqa: E402
 
-st.set_page_config(page_title="Football Analytics", layout="wide",
+st.set_page_config(page_title="Futlytics", layout="wide",
                    initial_sidebar_state="collapsed")
 ui_theme.apply()
 ui_theme.consume_leaderboard_click()  # may switch_page + stop if ?lbp= is set
+ui_theme.consume_team_click()          # may switch_page + stop if ?tbp= is set
 
 LEAGUE_LABELS = {
     "ENG-Premier League": "Premier League",
@@ -106,21 +107,11 @@ if tbl.empty:
     st.caption("No standings available for this selection.")
 else:
     show = tbl.drop(columns=["league", "season"]).reset_index(drop=True)
-    ev = st.dataframe(
-        show, hide_index=True, width="stretch",
-        on_select="rerun", selection_mode="single-row", key="standings",
-        column_config={
-            "position": st.column_config.NumberColumn("#", width="small"),
-            "xG": st.column_config.NumberColumn("xG", help="Expected goals for"),
-            "xGA": st.column_config.NumberColumn("xGA", help="Expected goals against"),
-            "xGD": st.column_config.NumberColumn("xGD", help="Expected goal difference"),
-            "xPTS": st.column_config.NumberColumn("xPTS", help="Expected points"),
-        },
-    )
-    if ev.selection.rows:
-        team = show.iloc[ev.selection.rows[0]]["team"]
-        st.session_state["nav_team"] = (league, season, team)
-        st.switch_page("pages/2_Team_Dashboard.py")
+    for c in ("xG", "xGA", "xGD", "xPTS"):  # tidy the expected-goals decimals
+        if c in show.columns:
+            show[c] = show[c].map(lambda v: "" if pd.isna(v) else f"{float(v):.1f}")
+    show = show.rename(columns={"position": "#"})
+    ui_theme.standings_table(show, league, season, team_col="team", pos_col="#")
 
 # --- Leaderboards (styled cards; click a name -> player profile) -------------
 ui_theme.section_header(

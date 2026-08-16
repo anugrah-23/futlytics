@@ -16,8 +16,11 @@ import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
 import ui_theme  # noqa: E402
-from viz.radar import pizza  # noqa: E402
+from viz.radar import pizza, dna_fingerprint  # noqa: E402
+import viz.pitch as _vp  # noqa: E402  (theme-aware colors)
+from viz.pitch import passing_map  # noqa: E402
 from etl.metrics import OUTFIELD_CONCEPTS, GK_CONCEPTS  # noqa: E402
+from etl.dna_metrics import CONCEPTS as DNA_CONCEPTS, CATEGORIES as DNA_CATEGORIES, CONCEPT_PARAMS  # noqa: E402
 
 st.set_page_config(page_title="Player Profile", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -35,10 +38,11 @@ LEAGUE_LABELS = {
 
 @st.cache_data(show_spinner=False)
 def _load():
-    return da.load("players"), da.load("player_metrics")
+    return (da.load("players"), da.load("player_metrics"),
+            da.load("player_dna"), da.load("player_passes"))
 
 
-players, metrics = _load()
+players, metrics, dna_all, passes_all = _load()
 
 if players.empty or metrics.empty:
     st.info("No player data yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```")
@@ -115,6 +119,113 @@ else:
                     unsafe_allow_html=True)
         ui_theme.chip_strip(list(zip(strengths["label"], strengths["percentile"])))
 
+# --- Player DNA (event-derived from Opta/WhoScored; featured clubs only) ------
+import unicodedata as _ud  # noqa: E402
+
+
+def _dna_norm(s: str) -> str:
+    nfkd = _ud.normalize("NFKD", str(s))
+    return "".join(c for c in nfkd if not _ud.combining(c)).lower().strip()
+
+
+def _fmt_dna(unit: str, v: float) -> str:
+    if pd.isna(v):
+        return "—"
+    return f"{v:.1f}%" if unit == "%" else f"{v:.2f}"
+
+
+dna = dna_all.iloc[0:0]
+if not dna_all.empty:
+    dna = dna_all[(dna_all["league"] == lg) & (dna_all["season"] == sn)
+                  & (dna_all["nkey"] == _dna_norm(pl))]
+    if dna["playerId"].nunique() > 1:  # same normalized name -> take most-played
+        best = dna.groupby("playerId")["minutes"].first().idxmax()
+        dna = dna[dna["playerId"] == best]
+
+if not dna.empty and dna["percentile"].notna().any():
+    ui_theme.section_header(
+        "Fingerprint · event data", "Player DNA",
+        "Derived from Opta/WhoScored event data — available for featured clubs. "
+        "Ranked vs other featured-club players in the same position.")
+    pmap = {k: v for k, v in zip(dna["param_key"], dna["percentile"])}
+    cats, scores = [], []
+    for cat, keys in DNA_CATEGORIES.items():
+        vals = [pmap[k] for k in keys if k in pmap and pd.notna(pmap[k])]
+        if vals:
+            cats.append(cat)
+            scores.append(sum(vals) / len(vals))
+    fp_l, fp_r = st.columns([3, 2])
+    if not limited and len(cats) >= 3:
+        with fp_l:
+            st.plotly_chart(dna_fingerprint(cats, scores, title="DNA fingerprint"),
+                            theme=None, width="stretch")
+        with fp_r:
+            st.markdown('<p class="eyebrow" style="margin-top:8px">Category index · '
+                        'percentile</p>', unsafe_allow_html=True)
+            ui_theme.chip_strip(sorted(zip(cats, scores), key=lambda t: -t[1]))
+    else:
+        st.caption("Fingerprint hidden (limited sample). Per-concept values below.")
+
+    # Passing map (season) — every pass by this player, filterable by type.
+    pmap_rows = passes_all.iloc[0:0]
+    if not passes_all.empty:
+        pmap_rows = passes_all[(passes_all["league"] == lg) & (passes_all["season"] == sn)
+                               & (passes_all["nkey"] == _dna_norm(pl))]
+    if not pmap_rows.empty:
+        st.markdown('<p class="eyebrow" style="margin-top:18px">Passing map · season</p>',
+                    unsafe_allow_html=True)
+        VIEWS = {"All passes": None, "Progressive": "prog",
+                 "Into final third": "final_third", "Key passes & assists": "key",
+                 "Crosses": "cross"}
+        mc1, mc2 = st.columns([1, 3])
+        view = mc1.radio("Show", list(VIEWS.keys()), key="pmap_view")
+        show_inc = mc1.checkbox("Include incomplete", value=(view == "All passes"))
+        col = VIEWS[view]
+        if col is None:
+            sub, color = pmap_rows, _vp.ACCENT
+        elif col == "key":
+            sub = pmap_rows[(pmap_rows["keypass"] == 1) | (pmap_rows["assist"] == 1)]
+            color = _vp.AMBER
+        else:
+            sub, color = pmap_rows[pmap_rows[col] == 1], _vp.ACCENT
+        with mc2:
+            st.pyplot(passing_map(sub, title=f"{pl} — {view.lower()}",
+                                  color=color, show_incomplete=show_inc))
+            tot = len(sub)
+            comp = int((sub["outcome"] == 1).sum())
+            pct = f"{100 * comp / tot:.0f}%" if tot else "—"
+            st.caption(f"{tot} passes · {pct} completed · attacking left → right. "
+                       "Green = completed, red = incomplete. Source: WhoScored/Opta events.")
+
+    st.markdown('<p class="eyebrow" style="margin-top:18px">Concepts · parameters</p>',
+                unsafe_allow_html=True)
+    for i, concept in enumerate(DNA_CONCEPTS):
+        block = dna[dna["concept"] == concept].copy()
+        if block.empty:
+            continue
+        charted = block.dropna(subset=["percentile"])
+        with st.expander(concept, expanded=(i == 0)):
+            cl, cr = st.columns([1, 1])
+            with cr:
+                tb = pd.DataFrame({
+                    "Parameter": block["label"],
+                    "Value": [_fmt_dna(u, v) for u, v in zip(block["unit"], block["value"])],
+                    "Pctl": [("—" if pd.isna(p) else f"{p:.0f}") for p in block["percentile"]],
+                })
+                ui_theme.data_table(tb)
+            with cl:
+                if limited or charted.empty:
+                    st.caption("Percentile chart hidden (limited sample).")
+                else:
+                    st.plotly_chart(
+                        pizza(charted["label"].tolist(),
+                              charted["percentile"].tolist(), title=concept),
+                        theme=None, width="stretch")
+    st.divider()
+
+# --- Scouting profile (season aggregates: FBref + Understat) ------------------
+ui_theme.section_header("Season aggregates", "Scouting Profile",
+                        "Finishing, creativity & discipline from FBref + Understat.")
 st.caption("Each wedge is a percentile (0–100) vs positional peers — a fuller, greener wedge "
            "ranks higher. Numbers are per-90 unless marked % or /90.")
 st.divider()
@@ -145,8 +256,7 @@ for concept in concepts:
             _fmt(u, v) for u, v in zip(block["unit"], block["value"])
         ]
         tbl["Pctl"] = tbl["Pctl"].map(lambda p: "—" if pd.isna(p) else f"{p:.0f}")
-        st.dataframe(tbl[["Metric", "Per-90 / value", "Pctl"]],
-                     hide_index=True, width="stretch")
+        ui_theme.data_table(tbl[["Metric", "Per-90 / value", "Pctl"]])
 
     with left:
         charted = block.dropna(subset=["percentile"])
@@ -156,7 +266,7 @@ for concept in concepts:
             fig = pizza(charted["label"].tolist(),
                         charted["percentile"].tolist(),
                         title=concept)
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, theme=None, width="stretch")
     st.divider()
 
 st.caption(f"Data last updated: {da.last_updated('players')} · "

@@ -156,7 +156,7 @@ if mode == "Players":
                            "values": [pct_maps[i][l] for l in comparable]}
                           for i, p in enumerate(people)]
                 st.plotly_chart(radar_overlay(series, comparable, title=concept),
-                                width="stretch")
+                                theme=None, width="stretch")
             else:
                 st.caption("Radar hidden (need ≥3 shared metrics with valid percentiles).")
 
@@ -174,7 +174,7 @@ if mode == "Players":
                                       + ("" if pd.isna(pct) else f"  ({pct:.0f})"))
                 rows.append(row)
             if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+                ui_theme.data_table(pd.DataFrame(rows))
                 st.caption("Cell = per-90 / value  (percentile).")
         st.divider()
 
@@ -258,7 +258,7 @@ else:
             for s in series:
                 s["values"] = [0.0 if pd.isna(v) else v for v in s["values"]]
         st.plotly_chart(radar_overlay(series, axes, title="Team strengths"),
-                        width="stretch")
+                        theme=None, width="stretch")
 
     with right:
         STATS = [("Pts", "Points", 0), ("GF", "Goals for", 0), ("GA", "Goals against", 0),
@@ -271,7 +271,7 @@ else:
                 v = trows[t][col]
                 row[t] = "—" if pd.isna(v) else (f"{v:.{dp}f}" if dp else f"{int(v)}")
             rows.append(row)
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        ui_theme.data_table(pd.DataFrame(rows))
         st.caption("Real table stats alongside their xG shadow. Lower PPDA = more pressing.")
 
     st.caption(f"Data last updated: {da.last_updated('standings')}")

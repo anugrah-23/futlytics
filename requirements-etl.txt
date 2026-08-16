@@ -1,0 +1,5 @@
+# ETL / data-refresh dependencies — needed only to (re)scrape and rebuild the
+# processed parquets, NOT to run the deployed app. Install with:
+#     pip install -r requirements-etl.txt
+-r requirements.txt
+soccerdata>=1.8

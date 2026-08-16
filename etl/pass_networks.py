@@ -78,7 +78,11 @@ def _team_network(te: pd.DataFrame, league: str, season: str,
 
     nd = top.rename(columns={"player": "label"})[["label", "x", "y", "involvement"]].copy()
     nd["kind"] = "node"
-    ed = edges[["x", "y", "x_end", "y_end", "count"]].copy()
+    # Keep the pair's player labels on the edge so season-averaging can match
+    # links across matches exactly (older rows without these fall back to
+    # nearest-node snapping in viz.average_pass_network).
+    ed = edges[["a", "b", "x", "y", "x_end", "y_end", "count"]].rename(
+        columns={"a": "label", "b": "label_end"}).copy()
     ed["kind"] = "edge"
     block = pd.concat([nd, ed], ignore_index=True)
     block["league"], block["season"], block["team"], block["match"] = league, season, team, match

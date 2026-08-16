@@ -13,6 +13,7 @@ import pandas as pd
 import soccerdata as sd
 
 from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.understat_patch import apply_patch
 from etl.understat_source import read_with_retry
 
 log = logging.getLogger(__name__)
@@ -23,20 +24,25 @@ KEEP = ["league", "season", "game_id", "team", "player", "xg", "location_x",
 
 
 def fetch_shots(seasons: list[str] | None = None) -> pd.DataFrame:
-    # Fetch per-league so a single malformed match (a known soccerdata Understat
-    # roster-parse bug) can't wipe out every league's shot data.
+    # Fetch per-(league, season): a single malformed match (a known soccerdata
+    # Understat roster-parse bug that hits some Bundesliga games) then only skips
+    # its own season, instead of wiping out a whole league across all seasons.
+    apply_patch()  # fix soccerdata's list-roster crash (recovers Bundesliga)
+    seasons = seasons or SEASONS
     frames = []
     for lg in LEAGUES:
-        try:
-            us = sd.Understat(leagues=lg, seasons=seasons or SEASONS,
-                              data_dir=Path(SOCCERDATA_CACHE))
-            frames.append(read_with_retry(
-                lambda us=us: us.read_shot_events().reset_index(), f"shots {lg}"))
-            log.info("shots fetched: %s", lg)
-        except Exception as exc:
-            log.warning("shots FAILED for %s (skipped): %s", lg, exc)
+        for sn in seasons:
+            try:
+                us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE))
+                fr = read_with_retry(
+                    lambda us=us: us.read_shot_events().reset_index(),
+                    f"shots {lg} {sn}", tries=5)
+                frames.append(fr)
+                log.info("shots fetched: %s %s (%d)", lg, sn, len(fr))
+            except Exception as exc:
+                log.warning("shots FAILED %s %s (skipped): %s", lg, sn, exc)
     if not frames:
-        raise RuntimeError("Understat shot events failed for all leagues")
+        raise RuntimeError("Understat shot events failed for all league-seasons")
     df = pd.concat(frames, ignore_index=True)
     df = df[[c for c in KEEP if c in df.columns]].copy()
     df["xg"] = pd.to_numeric(df["xg"], errors="coerce")

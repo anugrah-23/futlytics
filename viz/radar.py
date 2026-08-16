@@ -10,9 +10,24 @@ import plotly.graph_objects as go
 ACCENT = "#2ee6a6"        # "high percentile" accent (matches .streamlit theme)
 LOW = "#3a4a44"           # low-percentile muted fill
 BG = "#0e1512"
+INK = "#e6efe9"           # text/tick color, flipped by use_theme()
+TEMPLATE = "plotly_dark"  # plotly base template, flipped by use_theme()
 
 # Distinct hues for overlaying multiple players/teams on one radar (Compare).
 PALETTE = ["#2ee6a6", "#f2c14e", "#e8617d"]  # green, gold, coral
+
+
+def use_theme(light: bool) -> None:
+    """Re-point the module palette at the light or dark mood. ui_theme.apply()
+    calls this so charts built afterwards match the page chrome. Charts must be
+    rendered with st.plotly_chart(..., theme=None) so this template wins."""
+    global ACCENT, LOW, BG, INK, TEMPLATE, PALETTE
+    if light:
+        ACCENT, LOW, BG, INK, TEMPLATE = "#1f9e75", "#dfe9df", "#fdfbf4", "#26231a", "plotly_white"
+        PALETTE = ["#1f9e75", "#b6851a", "#cf4f6b"]
+    else:
+        ACCENT, LOW, BG, INK, TEMPLATE = "#2ee6a6", "#3a4a44", "#0e1512", "#e6efe9", "plotly_dark"
+        PALETTE = ["#2ee6a6", "#f2c14e", "#e8617d"]
 
 
 def _pct_to_color(pct: float) -> str:
@@ -39,8 +54,9 @@ def pizza(labels: list[str], percentiles: list[float], title: str = "") -> go.Fi
     )
     fig.update_layout(
         title=title,
-        template="plotly_dark",
+        template=TEMPLATE,
         paper_bgcolor=BG,
+        font=dict(color=INK),
         polar=dict(
             bgcolor=BG,
             radialaxis=dict(range=[0, 100], showticklabels=True, tickvals=[25, 50, 75, 100]),
@@ -55,6 +71,37 @@ def pizza(labels: list[str], percentiles: list[float], title: str = "") -> go.Fi
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
     return f"rgba({r},{g},{b},{alpha})"
+
+
+def dna_fingerprint(labels: list[str], values: list[float], title: str = "") -> go.Figure:
+    """Single filled radar of a player's DNA category scores (0-100 percentiles).
+
+    A closed accent-green polygon over the 11 DNA axes — the player's shape at a
+    glance, before drilling into per-concept parameters.
+    """
+    theta = labels + labels[:1]
+    vals = list(values) + list(values)[:1]
+    fig = go.Figure(
+        go.Scatterpolar(
+            r=vals, theta=theta, mode="lines+markers",
+            line=dict(color=ACCENT, width=2),
+            marker=dict(color=ACCENT, size=6),
+            fill="toself", fillcolor=_hex_to_rgba(ACCENT, 0.16),
+            hovertemplate="%{theta}: %{r:.0f}th pct<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title, template=TEMPLATE, paper_bgcolor=BG, font=dict(color=INK),
+        polar=dict(
+            bgcolor=BG,
+            radialaxis=dict(range=[0, 100], showticklabels=True, tickvals=[25, 50, 75, 100]),
+            angularaxis=dict(direction="clockwise"),
+        ),
+        showlegend=False,
+        margin=dict(l=80, r=80, t=50, b=50),
+        height=460,
+    )
+    return fig
 
 
 def radar_overlay(series: list[dict], labels: list[str], title: str = "") -> go.Figure:
@@ -85,8 +132,9 @@ def radar_overlay(series: list[dict], labels: list[str], title: str = "") -> go.
         )
     fig.update_layout(
         title=title,
-        template="plotly_dark",
+        template=TEMPLATE,
         paper_bgcolor=BG,
+        font=dict(color=INK),
         polar=dict(
             bgcolor=BG,
             radialaxis=dict(range=[0, 100], showticklabels=True, tickvals=[25, 50, 75, 100]),
