@@ -1,10 +1,17 @@
 name: Weekly data refresh
 
-# Rebuilds the live season (etl.run_all is incremental — it merges the current
-# season into the committed Parquet and leaves historical seasons frozen) and
-# commits the refreshed data back. Streamlit Community Cloud watches the repo
-# and redeploys on push. No Selenium/Chrome needed: pass networks / DNA are an
-# offline batch, so this job only touches the FBref + Understat tables.
+# Rebuilds the live season and commits the refreshed Parquet back; Streamlit
+# Community Cloud watches the repo and redeploys on push. Everything is
+# incremental + merge (etl.run_all / build_dna / build_passes rebuild only the
+# current season and splice it into the committed data, historical seasons stay
+# frozen), so a partial or flaky week never wipes anything.
+#
+# Two tiers of data:
+#   * FBref + Understat stats  -> fast, reliable, always run.
+#   * WhoScored pass networks / Player DNA -> Selenium + Chrome, slow and
+#     occasionally blocked from cloud IPs, so they run with continue-on-error
+#     (a bad week just keeps last-good) and resume off the committed parquet +
+#     a cached event store, scraping only newly-played matches.
 on:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC
@@ -16,23 +23,57 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 330    # stay well under the 6h hard limit
     steps:
-      - uses: actions/checkout@v4   # brings the committed parquets for the merge
+      - uses: actions/checkout@v4   # brings committed parquets for the merges
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # ETL needs the scraping deps (soccerdata/Understat), not just the lean
-      # runtime set the deployed app uses.
       - name: Install dependencies
         run: pip install -r requirements-etl.txt
 
-      - name: Run ETL (incremental — current season only)
+      # Persist the WhoScored/Opta event cache between runs so the pass-network
+      # scrape resumes and DNA/passes can rebuild the full current season.
+      # Completed matches never change, so caching them is safe.
+      - name: Restore scraped-event cache
+        uses: actions/cache@v4
+        with:
+          path: data/raw/soccerdata_cache
+          key: soccerdata-cache-${{ github.run_id }}
+          restore-keys: |
+            soccerdata-cache-
+
+      # Single source of truth for which season to refresh (from etl/config.py).
+      - name: Resolve current season
+        id: season
+        run: echo "value=$(python -c 'from etl.config import CURRENT_SEASON; print(CURRENT_SEASON)')" >> "$GITHUB_OUTPUT"
+
+      # --- Tier 1: stats (fast, reliable) ---
+      - name: Refresh stats (FBref + Understat, current season)
         run: python -m etl.run_all
 
+      # --- Tier 2: pass networks + DNA (Selenium/Chrome, best-effort) ---
+      # ubuntu-latest ships google-chrome-stable; Selenium Manager resolves the
+      # matching driver. Each step is non-fatal so the stats still commit.
+      - name: Scrape pass networks (current season, resumable)
+        continue-on-error: true
+        timeout-minutes: 240
+        run: python -m etl.pass_networks --featured --seasons ${{ steps.season.outputs.value }}
+
+      - name: Rebuild Player DNA (current season)
+        continue-on-error: true
+        run: python -m etl.build_dna --seasons ${{ steps.season.outputs.value }}
+
+      - name: Rebuild passing maps (current season)
+        continue-on-error: true
+        run: python -m etl.build_passes --seasons ${{ steps.season.outputs.value }}
+
+      # --- Commit whatever refreshed successfully ---
       - name: Commit refreshed data
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

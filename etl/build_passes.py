@@ -22,7 +22,7 @@ import pandas as pd
 
 from etl.build_dna import FEATURED_LEAGUES, _norm
 from etl.dna_events import ATT_PEN_X, FINAL_THIRD_X, load_events
-from etl.io_utils import write_parquet_atomic
+from etl.io_utils import merge_season_parquet
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("build_passes")
@@ -70,8 +70,8 @@ def main() -> int:
     df = build(args.seasons, args.leagues)
     if df.empty:
         log.error("no passes built"); return 1
-    write_parquet_atomic(df, "player_passes")
-    log.info("wrote player_passes (%d rows)", len(df))
+    n = merge_season_parquet(df, "player_passes", args.seasons)
+    log.info("wrote player_passes (%d rows total; merged seasons %s)", n, args.seasons)
     return 0
 
 

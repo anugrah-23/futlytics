@@ -23,7 +23,7 @@ import pandas as pd
 
 from etl.dna_events import (ATT_PEN_X, FINAL_THIRD_X, HALFSPACE_Y, load_events)
 from etl.dna_metrics import PARAM_BY_KEY, PARAMS
-from etl.io_utils import write_parquet_atomic
+from etl.io_utils import merge_season_parquet
 from etl.transform import MIN_MINUTES_DEFAULT, percentile_within_group
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -350,8 +350,8 @@ def main() -> int:
     df = build(args.seasons, args.leagues)
     if df.empty:
         log.error("no DNA built"); return 1
-    write_parquet_atomic(df, "player_dna")
-    log.info("wrote player_dna (%d rows)", len(df))
+    n = merge_season_parquet(df, "player_dna", args.seasons)
+    log.info("wrote player_dna (%d rows total; merged seasons %s)", n, args.seasons)
     return 0
 
 

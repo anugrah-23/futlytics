@@ -26,6 +26,26 @@ def write_parquet_atomic(df: pd.DataFrame, name: str) -> Path:
     return target
 
 
+def merge_season_parquet(df: pd.DataFrame, name: str, seasons: list[str]) -> int:
+    """Replace the given seasons' rows in <name>.parquet with df's freshly built
+    rows, preserving every other (frozen) season, then write atomically.
+
+    Lets an incremental job rebuild only the live season without discarding
+    history. An empty/None df is a no-op (returns -1) so a transient blank fetch
+    can't wipe committed data. Returns the merged row count.
+    """
+    if df is None or df.empty:
+        return -1
+    target = PROCESSED_DIR / f"{name}.parquet"
+    if target.exists() and "season" in df.columns:
+        old = pd.read_parquet(target)
+        if "season" in old.columns:
+            old = old[~old["season"].isin(seasons)]
+            df = pd.concat([old, df], ignore_index=True)
+    write_parquet_atomic(df, name)
+    return len(df)
+
+
 def read_parquet(name: str) -> pd.DataFrame:
     """Read data/processed/<name>.parquet. Raises FileNotFoundError if absent."""
     path = PROCESSED_DIR / f"{name}.parquet"
