@@ -1,7 +1,10 @@
 name: Weekly data refresh
 
-# Runs the ETL weekly and commits refreshed Parquet back to the repo.
-# Streamlit Community Cloud watches the repo and redeploys on push.
+# Rebuilds the live season (etl.run_all is incremental — it merges the current
+# season into the committed Parquet and leaves historical seasons frozen) and
+# commits the refreshed data back. Streamlit Community Cloud watches the repo
+# and redeploys on push. No Selenium/Chrome needed: pass networks / DNA are an
+# offline batch, so this job only touches the FBref + Understat tables.
 on:
   schedule:
     - cron: "0 6 * * 1"   # Mondays 06:00 UTC
@@ -14,18 +17,19 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4   # brings the committed parquets for the merge
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
+      # ETL needs the scraping deps (soccerdata/Understat), not just the lean
+      # runtime set the deployed app uses.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-etl.txt
 
-      # WhoScored's scraper is Selenium-based; ubuntu-latest ships Chrome.
-      - name: Run ETL
+      - name: Run ETL (incremental — current season only)
         run: python -m etl.run_all
 
       - name: Commit refreshed data
