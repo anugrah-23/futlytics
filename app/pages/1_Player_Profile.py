@@ -49,7 +49,10 @@ if players.empty or metrics.empty:
     st.stop()
 
 # --- Filters (top bar; state persists across pages) --------------------------
-seasons = sorted(players["season"].unique(), reverse=True)
+# Seasons come from player_metrics, not players: a live season can have Understat
+# leaderboard rows (Home) before FBref percentile profiles exist, and this page
+# needs the profiles — so only offer seasons that actually have them.
+seasons = sorted(metrics["season"].astype(str).unique(), reverse=True)
 leagues = list(LEAGUE_LABELS.keys())
 
 fc1, fc2 = st.columns([1, 2])

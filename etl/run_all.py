@@ -67,8 +67,21 @@ def stage_players(seasons: list[str]) -> bool:
         log.info("Players stage OK for %s", seasons)
         return True
     except Exception:
-        log.exception("Players stage FAILED (FBref CAPTCHA?) — keeping last-good")
-        return False
+        log.exception("Players stage FAILED (FBref CAPTCHA?) — trying Understat-only")
+        # Fallback: FBref is gated but Understat still serves the leaderboard
+        # metrics, so keep the Home leaderboards current. No player_metrics is
+        # written, so Player Profile stays clean; a later full FBref build
+        # replaces these rows via _merge_season.
+        try:
+            from etl.build_players import build_understat_only
+
+            n = _merge_season("players", build_understat_only(seasons), seasons)
+            log.info("  players (Understat-only) -> %s rows",
+                     n if n >= 0 else "unchanged")
+            return n >= 0
+        except Exception:
+            log.exception("Understat-only fallback FAILED — keeping last-good")
+            return False
 
 
 def stage_league(seasons: list[str]) -> bool:

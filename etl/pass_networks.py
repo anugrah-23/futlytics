@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 import soccerdata as sd
 
-from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.config import CURRENT_SEASON, LEAGUES, SEASONS, SOCCERDATA_CACHE
 from etl.io_utils import PROCESSED_DIR, write_parquet_atomic
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -150,6 +150,24 @@ def _schedule(ws: sd.WhoScored) -> pd.DataFrame:
     return sched.rename(columns=ren)
 
 
+def _played_mask(sched: pd.DataFrame) -> pd.Series:
+    """Matches actually played, so a live-season batch doesn't waste ~30-60s of
+    Selenium apiece failing to read events for future fixtures. Prefer a recorded
+    score; fall back to WhoScored status==6 (full time) or a past kickoff date."""
+    if "home_score" in sched.columns:
+        m = sched["home_score"].notna()
+        if m.any():
+            return m
+    if "status" in sched.columns:
+        m = pd.to_numeric(sched["status"], errors="coerce").eq(6)
+        if m.any():
+            return m
+    if "date" in sched.columns:
+        d = pd.to_datetime(sched["date"], errors="coerce", utc=True)
+        return d.notna() & (d <= pd.Timestamp.now(tz="UTC"))
+    return pd.Series(True, index=sched.index)
+
+
 def _existing_game_ids() -> set[int]:
     path = PROCESSED_DIR / "pass_networks.parquet"
     if not path.exists():
@@ -179,8 +197,12 @@ def build_featured(seasons: list[str] | None = None,
         if not aliases:
             continue
         for season in seasons:
+            # Live-season schedule re-fetched fresh so newly-played matches
+            # appear; a frozen early-season cache would hide them (same reason
+            # the Understat readers use no_cache for CURRENT_SEASON).
             ws = sd.WhoScored(leagues=league, seasons=season,
-                              data_dir=Path(SOCCERDATA_CACHE), headless=True)
+                              data_dir=Path(SOCCERDATA_CACHE), headless=True,
+                              no_cache=(season == CURRENT_SEASON))
             try:
                 sched = _schedule(ws)
             except Exception as exc:
@@ -199,11 +221,11 @@ def build_featured(seasons: list[str] | None = None,
                 continue
 
             mask = (sched["home_team"].isin(featured) | sched["away_team"].isin(featured))
-            todo = sched[mask].dropna(subset=["game_id"]).copy()
+            todo = sched[mask & _played_mask(sched)].dropna(subset=["game_id"]).copy()
             todo["game_id"] = pd.to_numeric(todo["game_id"], errors="coerce").astype("Int64")
             todo = todo.dropna(subset=["game_id"])
             pending = [int(g) for g in todo["game_id"].tolist() if int(g) not in done]
-            log.info("%s %s: %d featured matches, %d pending (%d already built)",
+            log.info("%s %s: %d played featured matches, %d pending (%d already built)",
                      league, season, len(todo), len(pending), len(todo) - len(pending))
 
             for gid in pending:

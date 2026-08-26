@@ -165,6 +165,34 @@ def build(seasons: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return players, metrics
 
 
+def build_understat_only(seasons: list[str]) -> pd.DataFrame:
+    """Players table for the League-Overview leaderboards from Understat ALONE.
+
+    FBref (positions, minutes, the percentile scouting profile) is CAPTCHA-gated
+    for the live season, but Understat already carries every leaderboard metric
+    (goals, xG, assists, xA, key passes, shots). This yields a players.parquet
+    slice good enough to light up the Home leaderboards + Golden Boot tile while
+    FBref catches up; it deliberately produces NO player_metrics, so the Player
+    Profile (which keys its season list off player_metrics) stays clean until the
+    full FBref build lands and _merge_season replaces these rows.
+    """
+    u = us.fetch(seasons)
+    if u is None or u.empty:
+        return pd.DataFrame()
+    out = u[INDEX].copy()
+    out["pos"] = ""
+    out["nation"] = ""
+    out["age"] = np.nan
+    out["minutes"] = np.nan          # unknown without FBref
+    out["pos_group"] = ""
+    out["limited_sample"] = True     # no minutes to qualify a sample
+    for col in _RAW_TOTALS:          # goals/assists/np_goals/xg/xa/key_passes/shots
+        out[col] = pd.to_numeric(u[col], errors="coerce") if col in u.columns else np.nan
+    log.info("Understat-only players -> %s (%d rows, %d seasons)",
+             out.shape, len(out), out["season"].nunique())
+    return out
+
+
 def build_all(seasons: list[str]) -> dict[str, pd.DataFrame]:
     """Players + metrics (FBref/Understat), standings & team_match (Understat)."""
     from etl.standings import build_standings, build_team_match

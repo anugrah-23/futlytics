@@ -64,7 +64,9 @@ def _chip(name: str, color: str) -> str:
 # PLAYERS
 # =============================================================================
 if mode == "Players":
-    seasons = sorted(players["season"].unique(), reverse=True)
+    # Metrics-driven (see Player Profile): only seasons with FBref percentile
+    # profiles, so Understat-only leaderboard seasons don't yield empty radars.
+    seasons = sorted(metrics["season"].astype(str).unique(), reverse=True)
     leagues = [l for l in LEAGUE_LABELS if l in set(players["league"])]
 
     fc1, fc2 = st.columns([1, 2])
