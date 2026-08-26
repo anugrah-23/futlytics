@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import soccerdata as sd
 
-from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.config import CURRENT_SEASON, LEAGUES, SEASONS, SOCCERDATA_CACHE
 from etl.understat_patch import apply_patch
 from etl.understat_source import read_with_retry
 
@@ -33,7 +33,8 @@ def fetch_shots(seasons: list[str] | None = None) -> pd.DataFrame:
     for lg in LEAGUES:
         for sn in seasons:
             try:
-                us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE))
+                us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE),
+                                  no_cache=(sn == CURRENT_SEASON))
                 fr = read_with_retry(
                     lambda us=us: us.read_shot_events().reset_index(),
                     f"shots {lg} {sn}", tries=5)

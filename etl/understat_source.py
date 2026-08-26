@@ -15,7 +15,7 @@ from typing import Callable, TypeVar
 import pandas as pd
 import soccerdata as sd
 
-from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.config import CURRENT_SEASON, LEAGUES, SEASONS, SOCCERDATA_CACHE
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,10 @@ def fetch(seasons: list[str] | None = None) -> pd.DataFrame:
     seasons = seasons or SEASONS
 
     def _one(lg: str, sn: str) -> pd.DataFrame:
-        us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE))
+        # Live season re-fetched fresh (its cached page freezes otherwise);
+        # historical seasons stay cached. See standings._team_match_stats.
+        us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE),
+                          no_cache=(sn == CURRENT_SEASON))
         return us.read_player_season_stats().reset_index()
 
     df = read_per_season(_one, seasons, "player stats")

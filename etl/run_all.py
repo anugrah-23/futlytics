@@ -52,18 +52,42 @@ def _merge_season(name: str, new_df: pd.DataFrame, seasons: list[str]) -> int:
 
 
 def stage_players(seasons: list[str]) -> bool:
-    """Rebuild + merge the Player Profile / League tables (FBref + Understat)."""
-    try:
-        from etl.build_players import build_all
+    """Rebuild + merge the Player Profile tables (FBref basics + Understat xG).
 
-        tables = build_all(seasons)
-        for name, df in tables.items():
+    FBref now sits behind a Cloudflare CAPTCHA (soccerdata 1.9); this stage may
+    fail for the live season until it lifts. It is isolated from stage_league so
+    a blocked FBref never stops the Understat-only standings from refreshing."""
+    try:
+        from etl.build_players import build
+
+        players, metrics = build(seasons)
+        for name, df in (("players", players), ("player_metrics", metrics)):
             n = _merge_season(name, df, seasons)
             log.info("  %s -> %s rows", name, n if n >= 0 else "unchanged")
         log.info("Players stage OK for %s", seasons)
         return True
     except Exception:
-        log.exception("Players stage FAILED — keeping last-good data")
+        log.exception("Players stage FAILED (FBref CAPTCHA?) — keeping last-good")
+        return False
+
+
+def stage_league(seasons: list[str]) -> bool:
+    """Rebuild + merge standings and per-match team stats (Understat only).
+
+    Kept separate from stage_players on purpose: Understat is reachable when
+    FBref is CAPTCHA-gated, so the league table and team dashboard can pick up
+    the new season even while player stats lag."""
+    try:
+        from etl.standings import build_standings, build_team_match
+
+        for name, df in (("standings", build_standings(seasons)),
+                         ("team_match", build_team_match(seasons))):
+            n = _merge_season(name, df, seasons)
+            log.info("  %s -> %s rows", name, n if n >= 0 else "unchanged")
+        log.info("League stage OK for %s", seasons)
+        return True
+    except Exception:
+        log.exception("League stage FAILED — keeping last-good data")
         return False
 
 
@@ -100,11 +124,13 @@ def main() -> int:
     seasons = args.seasons
 
     ok_players = stage_players(seasons)
+    ok_league = stage_league(seasons)
     ok_shots = stage_shots(seasons)
     # Non-fatal: as long as we didn't corrupt anything, exit 0 so the scheduler
     # commit step still runs with whatever refreshed successfully.
-    log.info("run_all done for %s. players=%s shots=%s", seasons, ok_players, ok_shots)
-    return 0 if (ok_players or ok_shots) else 1
+    log.info("run_all done for %s. players=%s league=%s shots=%s",
+             seasons, ok_players, ok_league, ok_shots)
+    return 0 if (ok_players or ok_league or ok_shots) else 1
 
 
 if __name__ == "__main__":

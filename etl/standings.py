@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import soccerdata as sd
 
-from etl.config import LEAGUES, SEASONS, SOCCERDATA_CACHE
+from etl.config import CURRENT_SEASON, LEAGUES, SEASONS, SOCCERDATA_CACHE
 from etl.understat_source import read_per_season
 
 log = logging.getLogger(__name__)
@@ -46,29 +46,49 @@ def _team_match_stats(seasons: list[str] | None) -> pd.DataFrame:
     """All-league team-match table, each (league, season) fetched as its own
     retryable request so one connection drop can't abort the rest."""
     def _one(lg: str, sn: str) -> pd.DataFrame:
-        us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE))
+        # The live season's season-level page is a moving target: soccerdata
+        # caches it as one file per league-season, so an early-season (or empty)
+        # snapshot would freeze and later reads keep serving stale rows. Force a
+        # fresh fetch for CURRENT_SEASON; frozen historical seasons stay cached.
+        us = sd.Understat(leagues=lg, seasons=sn, data_dir=Path(SOCCERDATA_CACHE),
+                          no_cache=(sn == CURRENT_SEASON))
         return us.read_team_match_stats().reset_index()
 
     return read_per_season(_one, seasons or SEASONS, "team match")
 
 
+# Columns _side() needs from the raw Understat team-match frame. Early in a
+# season (or after a flaky/partial fetch) Understat can return an empty or
+# malformed frame lacking these; treat that as "no matches yet" and return an
+# empty long table so the merge keeps last-good instead of crashing.
+_REQUIRED = ["league", "season", "home_team", "away_team", "home_goals"]
+
+
 def _long(seasons: list[str] | None) -> pd.DataFrame:
     m = _team_match_stats(seasons)
+    if m.empty or any(c not in m.columns for c in _REQUIRED):
+        log.warning("Understat team-match frame empty/malformed (cols=%s) — "
+                    "no standings this run", list(m.columns)[:8])
+        return pd.DataFrame()
     long = pd.concat([_side(m, "home"), _side(m, "away")], ignore_index=True)
     return long[long["gf"].notna()]  # played matches only
 
 
 def build_team_match(seasons: list[str] | None = None) -> pd.DataFrame:
     """Per-team, per-match long table (pressing/xG trends for the dashboard)."""
-    out = _long(seasons).sort_values(["league", "season", "team", "date"])
+    long = _long(seasons)
+    if long.empty:
+        return long
+    out = long.sort_values(["league", "season", "team", "date"])
     log.info("team_match -> %s", out.shape)
     return out.reset_index(drop=True)
 
 
 def build_standings(seasons: list[str] | None = None) -> pd.DataFrame:
-    m = _team_match_stats(seasons)
-    long = pd.concat([_side(m, "home"), _side(m, "away")], ignore_index=True)
-    long = long[long["gf"].notna()]  # played matches only
+    long = _long(seasons)
+    if long.empty:
+        log.info("standings -> no played matches for %s", seasons)
+        return pd.DataFrame()
 
     g = long.groupby(["league", "season", "team"], as_index=False).agg(
         MP=("gf", "size"),

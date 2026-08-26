@@ -56,7 +56,12 @@ if players.empty:
     st.stop()
 
 # --- Filters (top bar; state persists across pages) --------------------------
-seasons = sorted(players["season"].unique(), reverse=True)
+# Union player + standings seasons: a just-started season can have standings
+# (Understat) before FBref player stats arrive, so it must still be selectable.
+_season_vals = set(players["season"].astype(str))
+if not standings.empty:
+    _season_vals |= set(standings["season"].astype(str))
+seasons = sorted(_season_vals, reverse=True)
 league_keys = [l for l in LEAGUE_LABELS if l in set(players["league"])]
 
 fc1, fc2, _sp = st.columns([1, 1, 2])
