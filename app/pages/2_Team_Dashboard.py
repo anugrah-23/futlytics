@@ -16,6 +16,7 @@ import streamlit as st  # noqa: E402
 
 import data_access as da  # noqa: E402
 import ui_theme  # noqa: E402
+from teamnames import resolve_aliases  # noqa: E402
 from viz.pitch import shot_map, shot_heatmap, pass_network, average_pass_network  # noqa: E402
 
 st.set_page_config(page_title="Team Dashboard", layout="wide",
@@ -29,39 +30,9 @@ LEAGUE_LABELS = {
 }
 
 # Pass networks come from WhoScored, which names some clubs differently from the
-# Understat-derived standings/selector ("Man City" vs "Manchester City"). These
-# aliases cover cases the prefix-token matcher below can't (abbreviations).
-_PN_ALIASES = {
-    "Manchester United": "Man Utd",
-    "Paris Saint-Germain": "PSG", "Paris Saint Germain": "PSG",
-    "Internazionale": "Inter",
-}
-
-
-def _pn_tokens(name: str) -> list[str]:
-    import unicodedata
-    s = unicodedata.normalize("NFKD", str(name))
-    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
-    for ch in "-.'":
-        s = s.replace(ch, " ")
-    return [t for t in s.split() if t]
-
-
-def resolve_pn_team(selected: str, candidates: set[str]) -> str | None:
-    """Map a standings team name to its pass-network (WhoScored) equivalent:
-    exact match, then alias table, then token match where each token of the
-    shorter name prefixes one of the other ('Man City' <-> 'Manchester City')."""
-    if selected in candidates:
-        return selected
-    if _PN_ALIASES.get(selected) in candidates:
-        return _PN_ALIASES[selected]
-    sel = _pn_tokens(selected)
-    for cand in candidates:
-        ct = _pn_tokens(cand)
-        short, long = (sel, ct) if len(sel) <= len(ct) else (ct, sel)
-        if short and all(any(a.startswith(b) or b.startswith(a) for b in long) for a in short):
-            return cand
-    return None
+# Understat-derived standings/selector ("Man Utd" vs "Manchester United",
+# "Atletico" vs "Atletico Madrid", "PSG" vs "Paris Saint Germain"). Reconcile via
+# the shared canonical-key matcher (teamnames.resolve_aliases).
 
 
 @st.cache_data(show_spinner=False)
@@ -194,8 +165,8 @@ with tabs[4]:
     cols_ok = not pnets.empty and {"league", "season", "team", "kind"} <= set(pnets.columns)
     scope = (pnets[(pnets["league"] == league) & (pnets["season"] == season)]
              if cols_ok else pnets.iloc[0:0])
-    pn_team = resolve_pn_team(team, set(scope["team"])) if not scope.empty else None
-    pn = scope[scope["team"] == pn_team] if pn_team else scope.iloc[0:0]
+    pn_teams = resolve_aliases(team, set(scope["team"].astype(str))) if not scope.empty else set()
+    pn = scope[scope["team"].astype(str).isin(pn_teams)] if pn_teams else scope.iloc[0:0]
     if pn.empty:
         st.info(
             "**No pass networks for this team & season yet.** They come from WhoScored "
