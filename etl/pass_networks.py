@@ -208,12 +208,20 @@ def build_featured(seasons: list[str] | None = None,
             full = all_teams or (season >= FULL_COVERAGE_FROM)
             if not full and league not in FEATURED_TEAMS:
                 continue
-            # Live-season schedule re-fetched fresh so newly-played matches
-            # appear; a frozen early-season cache would hide them (same reason
-            # the Understat readers use no_cache for CURRENT_SEASON).
+            # Two readers on the same cache. The SCHEDULE reader re-fetches the
+            # live-season calendar fresh (no_cache) so newly-played matches show
+            # up; a frozen early-season cache would hide them. The EVENTS reader
+            # stays cached: completed-match events are immutable, and — crucially
+            # — a no_cache events reader would re-scrape the whole calendar (~2min)
+            # before EVERY match, which does not scale to all-teams volume. It
+            # reads the calendar the schedule reader just cached, then caches each
+            # match's events for instant resume.
             ws = sd.WhoScored(leagues=league, seasons=season,
                               data_dir=Path(SOCCERDATA_CACHE), headless=True,
                               no_cache=(season == CURRENT_SEASON))
+            ws_ev = sd.WhoScored(leagues=league, seasons=season,
+                                 data_dir=Path(SOCCERDATA_CACHE), headless=True,
+                                 no_cache=False)
             try:
                 sched = _schedule(ws)
             except Exception as exc:
@@ -249,7 +257,7 @@ def build_featured(seasons: list[str] | None = None,
                     log.info("hit --limit %d; stopping (resume by re-running)", limit)
                     return built
                 try:
-                    _append(build_for_match(gid, league, season, ws=ws))
+                    _append(build_for_match(gid, league, season, ws=ws_ev))
                     done.add(gid)
                     built += 1
                 except Exception as exc:
