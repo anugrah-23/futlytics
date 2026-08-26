@@ -179,13 +179,22 @@ def build_understat_only(seasons: list[str]) -> pd.DataFrame:
     u = us.fetch(seasons)
     if u is None or u.empty:
         return pd.DataFrame()
+    # Drop any rows Understat returns without a clean identity: a null season (or
+    # player/league) would surface as a junk "20No/ne" entry in the season picker.
+    u = u.dropna(subset=INDEX)
+    u = u[u["season"].astype(str).str.fullmatch(r"\d{4}")]
+    if u.empty:
+        return pd.DataFrame()
     out = u[INDEX].copy()
     out["pos"] = ""
     out["nation"] = ""
     out["age"] = np.nan
     out["minutes"] = np.nan          # unknown without FBref
     out["pos_group"] = ""
-    out["limited_sample"] = True     # no minutes to qualify a sample
+    # Not "limited" in the FBref sense — there simply are no FBref percentiles.
+    # Keeping this False lets the Player Profile still render the event-derived
+    # Player DNA charts (which carry their own percentiles) for featured clubs.
+    out["limited_sample"] = False
     for col in _RAW_TOTALS:          # goals/assists/np_goals/xg/xa/key_passes/shots
         out[col] = pd.to_numeric(u[col], errors="coerce") if col in u.columns else np.nan
     log.info("Understat-only players -> %s (%d rows, %d seasons)",

@@ -6,7 +6,9 @@ Low-minutes players are flagged and their charts degraded to plain tables.
 """
 from __future__ import annotations
 
+import re
 import sys
+import unicodedata as _ud
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -48,11 +50,22 @@ if players.empty or metrics.empty:
     st.info("No player data yet. Build it with:\n\n```\npython -m etl.build_players --seasons 2425\n```")
     st.stop()
 
+
+def _dna_norm(s: str) -> str:
+    nfkd = _ud.normalize("NFKD", str(s))
+    return "".join(c for c in nfkd if not _ud.combining(c)).lower().strip()
+
+
 # --- Filters (top bar; state persists across pages) --------------------------
-# Seasons come from player_metrics, not players: a live season can have Understat
-# leaderboard rows (Home) before FBref percentile profiles exist, and this page
-# needs the profiles — so only offer seasons that actually have them.
-seasons = sorted(metrics["season"].astype(str).unique(), reverse=True)
+# Season list = seasons with FBref percentile profiles (player_metrics) PLUS any
+# season that only has event-derived Player DNA. A just-started season (FBref
+# still CAPTCHA-gated) shows here off its DNA alone; for such a season the player
+# pool is narrowed to players who actually have DNA, so the search isn't full of
+# hollow entries. Well-formed codes only, newest-first (default = latest season).
+_metric_seasons = set(metrics["season"].astype(str))
+_dna_seasons = set(dna_all["season"].astype(str)) if not dna_all.empty else set()
+seasons = sorted((s for s in (_metric_seasons | _dna_seasons) if re.fullmatch(r"\d{4}", s)),
+                 reverse=True)
 leagues = list(LEAGUE_LABELS.keys())
 
 fc1, fc2 = st.columns([1, 2])
@@ -64,6 +77,13 @@ picked_leagues = fc2.multiselect("League(s)", leagues, default=leagues,
                                  key="flt_leagues")
 
 pool = players[(players["season"] == season) & (players["league"].isin(picked_leagues))]
+if season not in _metric_seasons and not dna_all.empty:
+    # DNA-only season (e.g. the live season before FBref lands): keep only the
+    # featured-club players who have event-derived analytics to show.
+    _ds = dna_all[dna_all["season"].astype(str) == season]
+    _dkeys = set(zip(_ds["league"].astype(str), _ds["nkey"].astype(str)))
+    pool = pool[[(lg, _dna_norm(p)) in _dkeys
+                 for lg, p in zip(pool["league"].astype(str), pool["player"])]]
 if pool.empty:
     st.warning("No players for that league/season selection.")
     st.stop()
@@ -123,14 +143,6 @@ else:
         ui_theme.chip_strip(list(zip(strengths["label"], strengths["percentile"])))
 
 # --- Player DNA (event-derived from Opta/WhoScored; featured clubs only) ------
-import unicodedata as _ud  # noqa: E402
-
-
-def _dna_norm(s: str) -> str:
-    nfkd = _ud.normalize("NFKD", str(s))
-    return "".join(c for c in nfkd if not _ud.combining(c)).lower().strip()
-
-
 def _fmt_dna(unit: str, v: float) -> str:
     if pd.isna(v):
         return "—"
@@ -229,8 +241,15 @@ if not dna.empty and dna["percentile"].notna().any():
 # --- Scouting profile (season aggregates: FBref + Understat) ------------------
 ui_theme.section_header("Season aggregates", "Scouting Profile",
                         "Finishing, creativity & discipline from FBref + Understat.")
-st.caption("Each wedge is a percentile (0–100) vs positional peers — a fuller, greener wedge "
-           "ranks higher. Numbers are per-90 unless marked % or /90.")
+if pm.empty:
+    # DNA-only season: FBref hasn't published this season yet (CAPTCHA-gated).
+    st.info("The FBref percentile scouting profile for this season isn't available "
+            "yet — FBref is still publishing 2026/27. The event-derived **Player "
+            "DNA** and **passing map** above are the live analytics for now; the "
+            "full percentile profile fills in automatically once FBref catches up.")
+else:
+    st.caption("Each wedge is a percentile (0–100) vs positional peers — a fuller, greener wedge "
+               "ranks higher. Numbers are per-90 unless marked % or /90.")
 st.divider()
 
 

@@ -7,6 +7,7 @@ across pages via st.session_state.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -61,7 +62,9 @@ if players.empty:
 _season_vals = set(players["season"].astype(str))
 if not standings.empty:
     _season_vals |= set(standings["season"].astype(str))
-seasons = sorted(_season_vals, reverse=True)
+# Keep only well-formed season codes ("2627") and sort newest-first so the
+# default selection is the latest season — never a stray/blank value.
+seasons = sorted((s for s in _season_vals if re.fullmatch(r"\d{4}", s)), reverse=True)
 league_keys = [l for l in LEAGUE_LABELS if l in set(players["league"])]
 
 fc1, fc2, _sp = st.columns([1, 1, 2])
