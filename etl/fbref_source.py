@@ -65,7 +65,14 @@ def _map_league(text: str | None) -> str | None:
 
 def _reader(seasons: list[str]) -> sd.FBref:
     # Big-5 is the only league key soccerdata accepts here; we only need .get().
-    return sd.FBref(leagues=BIG5, seasons=seasons, data_dir=SOCCERDATA_CACHE)
+    # soccerdata 1.9 drives FBref through a real Chrome (Cloudflare now CAPTCHA-
+    # gates the live-season pages). Force headless=True: it stops the default
+    # visible-window pyautogui CAPTCHA solver from hijacking the mouse locally,
+    # lets the weekly GitHub Action (no display) launch Chrome at all, and makes
+    # an unsolvable CAPTCHA raise cleanly so the caller keeps last-good data
+    # instead of stalling. 2627 flows in automatically once FBref stops gating.
+    return sd.FBref(leagues=BIG5, seasons=seasons,
+                    data_dir=SOCCERDATA_CACHE, headless=True)
 
 
 def _download(fb: sd.FBref, stat_type: str) -> list[tuple[str, str]]:

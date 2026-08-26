@@ -51,8 +51,14 @@ jobs:
         id: season
         run: echo "value=$(python -c 'from etl.config import CURRENT_SEASON; print(CURRENT_SEASON)')" >> "$GITHUB_OUTPUT"
 
-      # --- Tier 1: stats (fast, reliable) ---
+      # --- Tier 1: stats (Understat reliable; FBref now Cloudflare-gated) ---
+      # FBref moved behind a browser + CAPTCHA (soccerdata 1.9), so its fetch
+      # can stall or fail from cloud IPs. run_all isolates each stage and keeps
+      # last-good on failure; the timeout caps a stuck FBref so Understat + the
+      # commit still run. 2627 fills in automatically once FBref stops gating.
       - name: Refresh stats (FBref + Understat, current season)
+        continue-on-error: true
+        timeout-minutes: 45
         run: python -m etl.run_all
 
       # --- Tier 2: pass networks + DNA (Selenium/Chrome, best-effort) ---
