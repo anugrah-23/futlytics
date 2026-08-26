@@ -23,6 +23,13 @@ LEAGUES: dict[str, str] = {
 SEASONS: list[str] = ["2021", "2122", "2223", "2324", "2425", "2526", "2627"]
 CURRENT_SEASON: str = "2627"
 
+# Pass-network coverage: historical seasons were scraped for FEATURED_TEAMS only
+# (WhoScored/Selenium can't scale to ~1,750 matches/season retroactively). From
+# this season forward we build a pass network for EVERY team in EVERY played
+# match, accumulated incrementally by the weekly job. Season codes are
+# zero-padded 4-digit strings, so a plain string compare is chronological.
+FULL_COVERAGE_FROM: str = "2627"
+
 # --- Paths -------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"

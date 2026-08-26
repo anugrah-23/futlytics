@@ -64,7 +64,11 @@ jobs:
       # --- Tier 2: pass networks + DNA (Selenium/Chrome, best-effort) ---
       # ubuntu-latest ships google-chrome-stable; Selenium Manager resolves the
       # matching driver. Each step is non-fatal so the stats still commit.
-      - name: Scrape pass networks (current season, resumable)
+      # Full coverage from FULL_COVERAGE_FROM onward: every team, every played
+      # match of the current season (config decides; the flag name is legacy).
+      # Incremental + resumable, so each week only scrapes newly-played matches;
+      # a large first backfill is done locally, not in CI.
+      - name: Scrape pass networks (current season, all teams, resumable)
         continue-on-error: true
         timeout-minutes: 240
         run: python -m etl.pass_networks --featured --seasons ${{ steps.season.outputs.value }}
