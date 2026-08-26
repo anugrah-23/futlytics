@@ -11,6 +11,7 @@ Run:  python -m etl.pass_networks --match 1821050
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import time
 import unicodedata
@@ -21,6 +22,7 @@ import soccerdata as sd
 
 from etl.config import (CURRENT_SEASON, FULL_COVERAGE_FROM, LEAGUES, SEASONS,
                         SOCCERDATA_CACHE)
+from etl.dna_events import EVENTS_DIR, load_match
 from etl.io_utils import PROCESSED_DIR, write_parquet_atomic
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -46,38 +48,43 @@ FEATURED_TEAMS: dict[str, list[str]] = {
 }
 
 
-def _team_network(te: pd.DataFrame, league: str, season: str,
-                  team: str, match: str) -> pd.DataFrame | None:
-    # Receiver = the next same-team touch (Opta's related_player_id is unset on
-    # passes here). te is already in chronological order and team-filtered, so
-    # shift(-1) gives the next time this team touched the ball.
+def _team_network(te: pd.DataFrame, starters: set[str], league: str,
+                  season: str, team: str, match: str) -> pd.DataFrame | None:
+    """One team's pass network, restricted to its STARTING XI.
+
+    Nodes are the players who started the match (Opta ``isFirstEleven``), so the
+    goalkeeper is always kept and substitutes are excluded — a proper "starting
+    shape" rather than a top-N-by-involvement view that could drop a low-touch
+    keeper or promote a busy sub. ``te`` is this team's touches in chronological
+    order; the receiver is approximated by the next same-team touch (Opta's
+    related_player_id is unset on these passes)."""
     te = te.copy()
     te["receiver"] = te["player"].shift(-1)
 
-    passes = te[(te["type"] == "Pass") & (te["outcome_type"] == "Successful")].copy()
+    passes = te[(te["type"] == "Pass") & (te["outcome"] == 1)].copy()
     passes = passes.dropna(subset=["x", "y", "player"])
+    passes = passes[passes["player"].isin(starters)]  # starting XI only
     if passes.empty:
         return None
 
     nodes = (passes.groupby("player")
              .agg(x=("x", "mean"), y=("y", "mean"), involvement=("x", "size"))
              .reset_index())
-    top = nodes.sort_values("involvement", ascending=False).head(TOP_N)
-    keep = set(top["player"])
+    keep = set(nodes["player"])  # starters who completed at least one pass
 
     e = passes.dropna(subset=["receiver"])
-    e = e[e["player"].isin(keep) & e["receiver"].isin(keep)]
+    e = e[e["receiver"].isin(keep)]      # links between starters only
     e = e[e["player"] != e["receiver"]]
     pair = e.assign(a=e[["player", "receiver"]].min(axis=1),
                     b=e[["player", "receiver"]].max(axis=1))
     edges = (pair.groupby(["a", "b"]).size().reset_index(name="count"))
     edges = edges[edges["count"] >= MIN_PAIR_PASSES]
 
-    pos = top.set_index("player")[["x", "y"]]
+    pos = nodes.set_index("player")[["x", "y"]]
     edges["x"] = edges["a"].map(pos["x"]); edges["y"] = edges["a"].map(pos["y"])
     edges["x_end"] = edges["b"].map(pos["x"]); edges["y_end"] = edges["b"].map(pos["y"])
 
-    nd = top.rename(columns={"player": "label"})[["label", "x", "y", "involvement"]].copy()
+    nd = nodes.rename(columns={"player": "label"})[["label", "x", "y", "involvement"]].copy()
     nd["kind"] = "node"
     # Keep the pair's player labels on the edge so season-averaging can match
     # links across matches exactly (older rows without these fall back to
@@ -90,23 +97,55 @@ def _team_network(te: pd.DataFrame, league: str, season: str,
     return block
 
 
+def _match_display_name(match_json: dict) -> str:
+    """"YYYY-MM-DD Home-Away" — matches the schedule-derived name used before, so
+    rebuilt rows replace old ones on the (match, team) key."""
+    date = (match_json.get("startDate") or "")[:10]
+    return f'{date} {match_json["home"]["name"]}-{match_json["away"]["name"]}'.strip()
+
+
+def _network_from_cache(league: str, season: str, match_id: int) -> pd.DataFrame | None:
+    """Build both teams' starting-XI networks from the cached Opta match JSON.
+
+    Reads the raw event stream the scrape already cached (no Selenium), which
+    carries the authoritative lineup (isFirstEleven / position) that soccerdata's
+    tabular read_events does not expose."""
+    path = EVENTS_DIR / f"{league}_{season}" / f"{int(match_id)}.json"
+    if not path.exists():
+        return None
+    events, meta = load_match(path)
+    if events.empty or meta.empty or "is_starter" not in meta.columns:
+        return None
+    match = _match_display_name(json.loads(path.read_text(encoding="utf-8")))
+    frames = []
+    for team in meta["team"].dropna().unique():
+        starters = set(meta[(meta["team"] == team) & (meta["is_starter"])]["player"])
+        if not starters:
+            continue
+        te = events[events["team"] == team].sort_values("seq")
+        block = _team_network(te, starters, league, season, team, match)
+        if block is not None:
+            frames.append(block)
+    if not frames:
+        return None
+    out = pd.concat(frames, ignore_index=True)
+    out["game_id"] = int(match_id)
+    log.info("match %s -> %d rows (%d teams)", match, len(out), out["team"].nunique())
+    return out
+
+
 def build_for_match(match_id: int, league: str, season: str,
                     ws: "sd.WhoScored | None" = None) -> pd.DataFrame:
-    # Reuse the caller's reader when given (a batch reads many matches from one
-    # league-season) so the schedule is resolved once, not re-fetched per match.
+    # read_events fetches the match and caches its raw Opta JSON; we then build
+    # the network from that cache so we get the lineup (starters/GK) it carries.
+    # Reuse the caller's reader when given so the schedule is resolved once.
     if ws is None:
         ws = sd.WhoScored(leagues=league, seasons=season,
                           data_dir=Path(SOCCERDATA_CACHE), headless=True)
-    ev = ws.read_events(match_id=match_id).reset_index()
-    match = ev["game"].iloc[0] if "game" in ev.columns else str(match_id)
-    frames = []
-    for team in ev["team"].dropna().unique():
-        block = _team_network(ev[ev["team"] == team], league, season, team, match)
-        if block is not None:
-            frames.append(block)
-    out = pd.concat(frames, ignore_index=True)
-    out["game_id"] = int(match_id)  # stable key for resume/skip in batch mode
-    log.info("match %s -> %d rows (%d teams)", match, len(out), out["team"].nunique())
+    ws.read_events(match_id=match_id)  # side effect: cache the raw match JSON
+    out = _network_from_cache(league, season, match_id)
+    if out is None:
+        raise RuntimeError(f"no usable cached events for match {match_id}")
     return out
 
 
@@ -267,6 +306,49 @@ def build_featured(seasons: list[str] | None = None,
     return built
 
 
+def rebuild_cached(seasons: list[str] | None = None,
+                   leagues: list[str] | None = None) -> int:
+    """Regenerate pass networks for every already-cached match, in place, from
+    the raw Opta JSON — no scraping. Use this to re-apply the current builder
+    (e.g. the starting-XI node selection) to matches scraped earlier. Rows for a
+    rebuilt game_id replace the old ones; other seasons/games are untouched."""
+    seasons = seasons or SEASONS
+    leagues = leagues or list(LEAGUES)
+    blocks, ids = [], set()
+    for league in leagues:
+        for season in seasons:
+            d = EVENTS_DIR / f"{league}_{season}"
+            if not d.is_dir():
+                continue
+            n = 0
+            for fp in sorted(d.glob("*.json")):
+                gid = int(fp.stem)
+                try:
+                    out = _network_from_cache(league, season, gid)
+                except Exception as exc:
+                    log.warning("rebuild %s FAILED: %s", fp.name, exc)
+                    continue
+                if out is not None:
+                    blocks.append(out)
+                    ids.add(gid)
+                    n += 1
+            if n:
+                log.info("%s %s: rebuilt %d cached matches", league, season, n)
+    if not blocks:
+        log.info("rebuild_cached: nothing to do")
+        return 0
+    new = pd.concat(blocks, ignore_index=True)
+    path = PROCESSED_DIR / "pass_networks.parquet"
+    if path.exists():
+        old = pd.read_parquet(path)
+        if "game_id" in old.columns:
+            old = old[~pd.to_numeric(old["game_id"], errors="coerce").isin(ids)]
+        new = pd.concat([old, new], ignore_index=True)
+    write_parquet_atomic(new, "pass_networks")
+    log.info("rebuild_cached: %d matches rebuilt, %d rows total", len(ids), len(new))
+    return len(ids)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Build WhoScored pass networks (single match or featured batch).")
@@ -280,10 +362,18 @@ def main() -> int:
     ap.add_argument("--all-teams", action="store_true",
                     help="force full (every team, every match) coverage for all "
                          "seasons in scope, not just those past the threshold")
+    ap.add_argument("--rebuild-cached", action="store_true",
+                    help="regenerate networks for already-cached matches from the "
+                         "raw JSON (no scraping); applies the current builder")
     ap.add_argument("--seasons", nargs="+", help="seasons for --featured (default: all)")
     ap.add_argument("--leagues", nargs="+", help="leagues for --featured (default: all)")
     ap.add_argument("--limit", type=int, help="max matches this run (--featured)")
     args = ap.parse_args()
+
+    if args.rebuild_cached:
+        n = rebuild_cached(args.seasons, args.leagues)
+        log.info("rebuild complete: %d matches", n)
+        return 0
 
     if args.featured:
         n = build_featured(args.seasons, args.leagues, args.limit,

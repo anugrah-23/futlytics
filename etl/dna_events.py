@@ -115,7 +115,7 @@ def load_match(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
                 "game_id": game_id, "playerId": int(p["playerId"]),
                 "player": p.get("name", names.get(int(p["playerId"]), "")),
                 "team": team, "position": pos, "pos_group": pos_group(pos),
-                "minutes": minutes,
+                "minutes": minutes, "is_starter": first,
             })
     meta = pd.DataFrame(meta_rows)
 
